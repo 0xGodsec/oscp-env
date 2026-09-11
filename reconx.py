@@ -45,6 +45,19 @@ import sys
 import time
 from datetime import datetime
 
+# Optional companion modules (Obsidian/PakCyberbot notes + exam manager).
+# reconx stays a working single file if these are absent - the features they
+# add simply switch off.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import reconx_notes
+except ImportError:
+    reconx_notes = None
+try:
+    import reconx_exam
+except ImportError:
+    reconx_exam = None
+
 # --------------------------------------------------------------------------- #
 #  Terminal colours
 # --------------------------------------------------------------------------- #
@@ -151,6 +164,7 @@ def refresh_tools():
               "snmpwalk", "onesixtyone", "showmount", "dig",
               "redis-cli", "psql", "openssl", "ncat", "nc",
               "searchsploit",
+              "whatweb", "feroxbuster", "gobuster", "ffuf",
               "impacket-GetUserSPNs", "GetUserSPNs.py",
               "impacket-GetNPUsers", "GetNPUsers.py",
               "bloodhound-python", "bloodhound-ce-python",
@@ -502,14 +516,38 @@ RETRY_SCAN_CONCURRENCY = 20
 
 
 async def discover_ports(host, runner, args):
-    """Return a sorted list of open TCP ports using the fastest available method."""
+    """Return a sorted list of open TCP ports.
+
+    A fast connect-based sweep (rustscan, else the built-in async scanner)
+    finds ports in seconds, but both discover ports by firing large bursts of
+    TCP connections - and a rate-limiting host or firewall can silently drop a
+    burst. That produces either an EMPTY result or, more insidiously, a PARTIAL
+    one that looks like a genuine finding (confirmed against scanme.nmap.org:
+    rustscan variously returned [], [9929,31337], and [31337] across runs while
+    22/80/9929/31337 were all open). nmap's adaptive timing + retransmission
+    survive that throttling, so it's the accuracy authority the README promises:
+
+      * bounded scopes (--quick / --top-ports): an nmap confirmation pass costs
+        only seconds, so always run it and UNION in whatever the fast sweep
+        missed. This closes both the empty and the partial-result holes.
+      * full range (-p-): nmap -p- is minutes, not seconds, so keep the fast
+        sweep as the result and only fall back to nmap when it found NOTHING
+        (the unambiguous throttled/host-down case). A throttled full-range scan
+        can still under-report; re-run with --top-ports/--quick, or the -p-
+        result feeds nmap -sCV confirmation downstream anyway.
+    """
     # Full range unless --quick/--top-ports narrows it.
     if args.quick:
         port_list = TOP_1000
+        bounded = True
     elif args.top_ports:
         port_list = TOP_1000[: args.top_ports] if args.top_ports <= len(TOP_1000) else range(1, 65536)
+        bounded = True
     else:
         port_list = range(1, 65536)
+        bounded = False
+
+    ports = set()
 
     if TOOLS.get("rustscan") and not args.no_rustscan:
         info(f"port discovery via rustscan ({'top 1000' if args.quick else 'full range'})")
@@ -518,29 +556,67 @@ async def discover_ports(host, runner, args):
                f"-t {int(args.host_timeout*1000)} -g")
         rc, out = await runner.run(cmd, outfile=f"{host}/scans/rustscan.txt",
                                    label="rustscan", timeout=args.scan_timeout)
-        ports = parse_rustscan_greppable(out)
-        if ports:
-            return ports
-        warn("rustscan returned nothing; falling back to async scanner")
+        ports.update(parse_rustscan_greppable(out))
+        if not ports:
+            warn("rustscan returned nothing; falling back to async scanner")
 
-    info(f"port discovery via async connect-scan ({'top 1000' if args.quick or args.top_ports else 'full 65535'})")
-    ports = await async_port_scan(host, list(port_list),
-                                  concurrency=args.concurrency,
-                                  timeout=args.host_timeout)
-    if not ports and args.concurrency > RETRY_SCAN_CONCURRENCY:
-        # A burst of hundreds of simultaneous connection attempts can trip a
-        # host's or firewall's rate-limiting and silently drop every probe -
-        # confirmed directly: scanme.nmap.org dropped 100% of connections at
-        # concurrency=100 despite having open ports, but succeeded reliably
-        # at 20. One retry at a much lower concurrency is what distinguishes
-        # "truly no open ports" from "got rate-limited" before reporting a
-        # live host as down.
-        warn(f"0 ports found at concurrency={args.concurrency} - retrying at "
-             f"concurrency={RETRY_SCAN_CONCURRENCY} in case of rate-limiting")
-        ports = await async_port_scan(host, list(port_list),
-                                      concurrency=RETRY_SCAN_CONCURRENCY,
+    # Async connect-sweep: the primary when rustscan is absent, the fallback
+    # when it came up empty. (When rustscan already found ports we skip straight
+    # to the nmap confirmation below rather than double-sweeping.)
+    if not ports and not runner.dry_run:
+        info(f"port discovery via async connect-scan ({'top 1000' if bounded else 'full 65535'})")
+        found = await async_port_scan(host, list(port_list),
+                                      concurrency=args.concurrency,
                                       timeout=args.host_timeout)
-    return ports
+        if not found and args.concurrency > RETRY_SCAN_CONCURRENCY:
+            # A burst of hundreds of simultaneous connection attempts can trip a
+            # host's or firewall's rate-limiting and silently drop every probe -
+            # confirmed directly: scanme.nmap.org dropped 100% of connections at
+            # concurrency=100 despite having open ports, but succeeded reliably
+            # at 20. One retry at a much lower concurrency is what distinguishes
+            # "truly no open ports" from "got rate-limited" before reporting a
+            # live host as down.
+            warn(f"0 ports found at concurrency={args.concurrency} - retrying at "
+                 f"concurrency={RETRY_SCAN_CONCURRENCY} in case of rate-limiting")
+            found = await async_port_scan(host, list(port_list),
+                                          concurrency=RETRY_SCAN_CONCURRENCY,
+                                          timeout=args.host_timeout)
+        ports.update(found)
+
+    # nmap: confirm the fast result on bounded scopes (cheap, catches throttled
+    # partial results), or act as the last-resort discovery when the fast sweep
+    # found nothing at all. See the docstring for why full -p- skips the confirm.
+    if TOOLS.get("nmap") and (bounded or not ports):
+        before = set(ports)
+        ports.update(await nmap_discover(host, runner, args, confirm=bool(before)))
+        gained = ports - before
+        if before and gained:
+            warn(f"nmap confirmation found {len(gained)} port(s) the fast sweep "
+                 f"missed (likely rate-limited): {', '.join(map(str, sorted(gained)))}")
+
+    return sorted(ports)
+
+
+async def nmap_discover(host, runner, args, confirm=False):
+    """Port discovery via nmap, used by discover_ports either to confirm a fast
+    sweep on a bounded scope or as the last resort when the fast sweep found
+    nothing. Mirrors the scan scope chosen there. Scan type is left to nmap: a
+    privileged run gets the faster SYN scan, an unprivileged one falls back to
+    TCP connect - both keep nmap's retransmission, which is what survives
+    connection-burst throttling.
+    """
+    if args.quick:
+        pspec = "--top-ports 1000"
+    elif args.top_ports:
+        pspec = f"--top-ports {args.top_ports}"
+    else:
+        pspec = "-p-"
+    cmd = f"nmap -Pn --open {pspec} -oN /dev/stdout {host}"
+    info(f"port discovery via nmap ({pspec}) - "
+         f"{'confirming fast sweep' if confirm else 'fallback after empty connect-scan'}")
+    rc, out = await runner.run(cmd, outfile=f"{host}/scans/nmap_discovery.txt",
+                               label="nmap-discovery", timeout=args.scan_timeout)
+    return sorted(parse_nmap_ports(out).keys())
 
 
 def parse_rustscan_greppable(text):
@@ -1431,6 +1507,100 @@ async def enum_rdp(host, port, runner, args, findings):
 
 
 # --------------------------------------------------------------------------- #
+#  Web content enumeration (background) - the OSCP dir-bust, automated
+# --------------------------------------------------------------------------- #
+_WEB_WORDLISTS = [
+    "/usr/share/seclists/Discovery/Web-Content/raft-small-words.txt",
+    "/usr/share/wordlists/dirb/common.txt",
+    "/usr/share/wordlists/dirbuster/directory-list-2.3-small.txt",
+]
+def _web_wordlist():
+    return _first_existing_file(_WEB_WORDLISTS)
+
+# high-value paths worth pulling straight into the ranked findings
+_WEB_JUICY = re.compile(
+    r"(\.git|\.svn|\.env|\.htpasswd|/backup|\.bak|\.old|\.sql|/upload|"
+    r"phpmyadmin|wp-admin|wp-login|/admin|/manager|/console|/actuator|swagger|"
+    r"\.zip|\.tar|id_rsa|/api/|/config|/setup|/install|/dashboard)", re.I)
+
+_HTTPS_PORTS = {443, 8443, 9443, 8834, 4443}
+
+
+def _web_scheme(port, name):
+    n = (name or "").lower()
+    if port in _HTTPS_PORTS or "https" in n or "ssl" in n:
+        return "https"
+    return "http"
+
+
+def _web_paths_to_findings(text, host, port, findings, limit=12):
+    """Parse feroxbuster/gobuster output; surface juicy paths as HIGH, and a
+    one-line INFO count of everything else, so notes don't drown in 200s."""
+    hits = []   # (status, url_or_path)
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*(\d{3})\s+\w+\s+.*?(https?://\S+|/\S*)\s*$", line)
+        if m:
+            hits.append((m.group(1), m.group(2))); continue
+        m = re.match(r"^(/\S*)\s+\(Status:\s*(\d{3})\)", line)  # gobuster
+        if m:
+            hits.append((m.group(2), m.group(1)))
+    juicy, count = [], 0
+    seen = set()
+    for status, path in hits:
+        if path in seen:
+            continue
+        seen.add(path); count += 1
+        if _WEB_JUICY.search(path) and len(juicy) < limit:
+            juicy.append((status, path))
+    for status, path in juicy:
+        findings.append(Finding("HIGH", "http", port,
+            f"web path [{status}] {path} - inspect (auth/upload/leak/source)"))
+    if count:
+        findings.append(Finding("INFO", "http", port,
+            f"dir brute found {count} path(s) on port {port} - see web_{port}/ output"))
+
+
+async def enum_http(host, port, runner, args, findings):
+    """whatweb fingerprint + root grab + a bounded directory brute
+    (feroxbuster, else gobuster). Backgrounded: the summary prints first, web
+    results refresh notes when done. Skip with --no-web."""
+    if getattr(args, "no_web", False):
+        return
+    scheme = _web_scheme(port, "")
+    tag = f"{host}/web_{port}"
+    url = f"{scheme}://{host}:{port}"
+
+    if TOOLS.get("whatweb"):
+        rc, out = await runner.run(
+            f"whatweb -a 3 --no-errors --color=never {url}",
+            f"{tag}/whatweb.txt", "whatweb", timeout=60)
+        scan_findings(out, "http", port, findings)
+        m = re.search(r"Title\[([^\]]+)\]", out or "")
+        if m:
+            findings.append(Finding("INFO", "http", port, f"Web title: {m.group(1).strip()[:80]}"))
+    if TOOLS.get("curl"):
+        rc, out = await runner.run(
+            f"curl -sSik --max-time 15 {url}/", f"{tag}/curl_root.txt", "curl-root", timeout=25)
+        scan_findings(out, "http", port, findings)
+
+    wl = _web_wordlist()
+    cap = min(getattr(args, "web_timeout", 180) or 180, getattr(args, "enum_timeout", 600))
+    if wl and TOOLS.get("feroxbuster"):
+        cmd = (f"feroxbuster -u {url} -w {shlex.quote(wl)} -t 50 -q -k -n "
+               f"-s 200,204,301,302,307,401,403 --time-limit {cap}s --no-state")
+        rc, out = await runner.run(cmd, f"{tag}/feroxbuster.txt", "feroxbuster", timeout=cap + 30)
+        _web_paths_to_findings(out, host, port, findings)
+    elif wl and TOOLS.get("gobuster"):
+        cmd = (f"gobuster dir -u {url} -w {shlex.quote(wl)} -q -k -t 50 --no-error")
+        rc, out = await runner.run(cmd, f"{tag}/gobuster.txt", "gobuster", timeout=cap + 30)
+        _web_paths_to_findings(out, host, port, findings)
+    else:
+        findings.append(Finding("INFO", "http", port,
+            f"Web on {url} - no feroxbuster/gobuster+wordlist found; run your own dir brute"))
+    good(f"web enum ({url}) done")
+
+
+# --------------------------------------------------------------------------- #
 #  Host-type-aware enum priority
 #
 #  Not in this table -> "unknown" host type -> every module falls back to
@@ -1522,6 +1692,10 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port == 3389 or "ms-wbt" in name or "rdp" in name:
             queue.add_job(Job(f"{host}:rdp:{port}", prio("rdp"), background=False,
                 coro_factory=functools.partial(enum_rdp, host, port, runner, args, findings)))
+
+        if is_web(port, name) and not getattr(args, "no_web", False):
+            queue.add_job(Job(f"{host}:web:{port}", PRIO_BACKGROUND, background=True,
+                coro_factory=functools.partial(enum_http, host, port, runner, args, findings)))
 
         # profile hints - guarded per-port so the guess pass + confirm pass
         # (both of which see this same port) never double-count.
@@ -1649,6 +1823,89 @@ def write_markdown(host, services, udp, findings, outdir, host_profile):
             f.write(f"- **{sev}** `{svc}{':'+str(port) if port else ''}` - {text}\n")
         f.write("\n## To do\n\n- [ ] \n")
     return path
+
+
+def _effective_host_type(host_profile):
+    if host_profile.get("dc_signals", 0) >= 2:
+        return "ad"
+    return host_profile.get("host_type")
+
+
+def _write_notes(host, host_state, findings, host_profile, runner, args):
+    """Write per-host notes: the enriched reconx_notes version when the module
+    is present (frontmatter + vault wikilinks + suggested next steps), else the
+    built-in NOTES.md. Returns the path written."""
+    services = host_state["services"]
+    udp = host_state["udp"]
+    if reconx_notes is not None:
+        try:
+            steps = suggest_next(services, findings, host_profile, args)
+        except Exception:
+            steps = None
+        try:
+            return reconx_notes.enrich_host_notes(
+                host, services, udp, findings, host_profile, runner.outdir,
+                next_steps=steps)
+        except Exception as e:  # never let note-gen kill a scan
+            warn(f"enriched notes failed ({e}); falling back to plain NOTES.md")
+    return write_markdown(host, services, udp, findings, runner.outdir, host_profile)
+
+
+def _merge_workspace(host, host_state, findings, host_profile, runner, args):
+    """Merge this host's recon into the PakCyberbot per-box notes.md, reusing
+    its template in place. No-op unless --workspace is set and reconx_notes is
+    present. Best-effort - never crashes a scan."""
+    if reconx_notes is None or not getattr(args, "workspace", None):
+        return
+    notes_path = os.path.join(args.workspace, "notes.md")
+    if not os.path.isfile(notes_path):
+        warn(f"workspace notes.md not found at {notes_path} - skipping merge "
+             f"(run setup_pentest_env first)")
+        return
+    try:
+        steps = suggest_next(host_state["services"], findings, host_profile, args)
+    except Exception:
+        steps = None
+    try:
+        reconx_notes.merge_workspace_notes(
+            notes_path, host, host_state["services"], host_state["udp"],
+            findings, host_profile,
+            os.path.abspath(os.path.join(runner.outdir, host)), next_steps=steps)
+        good(f"findings merged into workspace notes: {notes_path}")
+    except Exception as e:
+        warn(f"workspace notes merge skipped for {host}: {e}")
+
+
+def _sync_exam(host, host_state, findings, host_profile, runner, args):
+    """Feed this host's recon result into the exam dashboard + vault note, if
+    an exam is in play. Best-effort and fully optional."""
+    if reconx_exam is None:
+        return
+    name = args.exam or reconx_exam.current_exam_name()
+    if not name or not reconx_exam.exam_exists(name):
+        return
+    ht = _effective_host_type(host_profile)
+    try:
+        # honour --points/--set on first registration
+        if getattr(args, "points", None) is not None or getattr(args, "exam_set", None):
+            data = reconx_exam.load_exam(name)
+            if data is not None and host not in data["targets"]:
+                reconx_exam.add_target(data, host, points=args.points,
+                                       os_type=ht, set_name=args.exam_set)
+                reconx_exam.save_exam(data)
+        data = reconx_exam.sync_from_scan(
+            name, host, host_type=ht,
+            services=host_state["services"], findings=findings,
+            ports=host_state["ports"])
+        if data is None:
+            return
+        good(f"exam '{name}': {host} synced ({ht or 'unknown'}, "
+             f"{len(host_state['ports'])} ports)")
+        if not getattr(args, "no_vault", False) and reconx_notes is not None \
+                and data.get("vault_note"):
+            reconx_notes.build_exam_note(data, results_dir=runner.outdir)
+    except Exception as e:  # bookkeeping must never crash a scan
+        warn(f"exam sync skipped for {host}: {e}")
 
 
 # --------------------------------------------------------------------------- #
@@ -1784,9 +2041,10 @@ async def scan_host(host, runner, args):
         if not runner.dry_run:
             print_summary(host, host_state["services"], host_state["udp"], findings,
                           host_profile, elapsed, args)
-            md = write_markdown(host, host_state["services"], host_state["udp"], findings,
-                                runner.outdir, host_profile)
+            md = _write_notes(host, host_state, findings, host_profile, runner, args)
             good(f"notes written: {md}")
+            _merge_workspace(host, host_state, findings, host_profile, runner, args)
+            _sync_exam(host, host_state, findings, host_profile, runner, args)
 
         if queue.had_background_jobs:
             info("background modules (udp/vuln-scan) still running - "
@@ -1796,8 +2054,9 @@ async def scan_host(host, runner, args):
             elapsed = time.time() - t0
             print_summary(host, host_state["services"], host_state["udp"], findings,
                           host_profile, elapsed, args)
-            write_markdown(host, host_state["services"], host_state["udp"], findings,
-                           runner.outdir, host_profile)
+            _write_notes(host, host_state, findings, host_profile, runner, args)
+            _merge_workspace(host, host_state, findings, host_profile, runner, args)
+            _sync_exam(host, host_state, findings, host_profile, runner, args)
             good(f"{host}: background modules finished - notes updated")
 
 
@@ -2108,8 +2367,26 @@ def build_argparser():
                    help="skip commands whose output file already exists in outdir (resume an interrupted run)")
     p.add_argument("--no-exploit-search", action="store_true",
                    help="skip searchsploit lookups for detected service versions")
+    p.add_argument("--no-web", action="store_true",
+                   help="skip automated web enumeration (whatweb/feroxbuster)")
+    p.add_argument("--web-timeout", type=int, default=180,
+                   help="max seconds for the per-web-port directory brute (default 180)")
     p.add_argument("-v", "--verbose", action="store_true", help="print every command as it runs")
     p.add_argument("--no-color", action="store_true", help="disable coloured output")
+    # --- exam integration (companion modules) ---
+    xg = p.add_argument_group("exam / notes integration")
+    xg.add_argument("--exam", metavar="NAME",
+                    help="register this scan in an exam (see 'reconx exam'); "
+                         "default: the current exam if one exists")
+    xg.add_argument("--points", type=int,
+                    help="point value when auto-adding this target to the exam (default 20)")
+    xg.add_argument("--set", dest="exam_set", metavar="NAME",
+                    help="group this target into a named set (e.g. AD) in the exam")
+    xg.add_argument("--no-vault", action="store_true",
+                    help="don't touch the Obsidian vault note (still writes per-host NOTES.md)")
+    xg.add_argument("--workspace", metavar="DIR",
+                    help="PakCyberbot box workspace (~/ACTIVE_PENTEST/<box>): output "
+                         "goes to DIR/scans/reconx and findings merge into DIR/notes.md")
     return p
 
 
@@ -2150,6 +2427,12 @@ def apply_mode_defaults(args):
 
 async def amain(args):
     apply_mode_defaults(args)
+    # PakCyberbot workspace: default output into the box's existing scans/ dir
+    # unless the user gave an explicit -o. Reuses the workspace, never a new tree.
+    if getattr(args, "workspace", None):
+        args.workspace = os.path.expanduser(args.workspace)
+        if args.outdir == "reconx-results":
+            args.outdir = os.path.join(args.workspace, "scans", "reconx")
     refresh_tools()
     runner = Runner(args.outdir, dry_run=args.dry_run,
                     timeout=args.timeout, verbose=args.verbose, resume=args.resume)
@@ -2210,6 +2493,13 @@ async def amain(args):
 
 
 def main():
+    # `reconx exam ...` -> delegate to the companion exam manager (no scan).
+    if len(sys.argv) > 1 and sys.argv[1] == "exam":
+        if reconx_exam is None:
+            print("reconx_exam module not found (place reconx_exam.py next to reconx.py)",
+                  file=sys.stderr)
+            sys.exit(1)
+        sys.exit(reconx_exam.exam_cli(sys.argv[2:]))
     args = build_argparser().parse_args()
     if args.no_color or not sys.stdout.isatty():
         C.strip()

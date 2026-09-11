@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# recon - run ReconX as the recon/enum engine inside the PakCyberbot OSCP env.
+#
+# Fits PakCyberbot's workflow: resolves the box workspace + target from the
+# environment `setup_pentest_env` sets up, runs ReconX fast+parallel into the
+# box's existing scans/ dir, and merges ranked findings into its notes.md.
+# Terminal-session logging (toggle-terminal-logging) captures the run as-is.
+#
+# Usage:
+#   recon [TARGET] [reconx flags...]
+#     TARGET  an IP/host, OR a PakCyberbot var name: dc01 ms01 ms02 t1 t2 t3 ip1..
+#             (omitted -> first defined of DC01_IP, T1..T3_IP, MS01/02_IP, IP1)
+#   recon -w /path/to/box <TARGET> [flags]     # force a workspace
+#
+# Examples:
+#   recon 10.11.1.5                 # scan into the current box workspace
+#   recon dc01 -u alex -p 'Pw!' -d corp.htb --bloodhound
+#   recon t1 --quick
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+RECONX="$HERE/reconx.py"
+[ -f "$RECONX" ] || { echo "[!] reconx.py not found next to recon ($RECONX)"; exit 1; }
+
+# Pull in target IP vars + DIR_NAME that setup_pentest_env exported.
+[ -f "$HOME/.my_penenv_settings" ] && source "$HOME/.my_penenv_settings" || true
+
+WS=""
+if [[ "${1:-}" == "-w" || "${1:-}" == "--workspace" ]]; then
+  WS="$2"; shift 2
+fi
+
+resolve_target() {
+  local t="$1"
+  # a literal IP or a dotted/colon hostname passes straight through
+  if [[ "$t" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "$t" == *.* ]] || [[ "$t" == *:* ]]; then
+    echo "$t"; return 0
+  fi
+  local up="${t^^}"
+  for cand in "$up" "${up}_IP"; do
+    if [[ -n "${!cand:-}" ]]; then echo "${!cand}"; return 0; fi
+  done
+  echo ""; return 1
+}
+
+TARGET="${1:-}"
+if [[ -n "$TARGET" && ! "$TARGET" =~ ^- ]]; then
+  shift
+  RESOLVED="$(resolve_target "$TARGET" || true)"
+  [ -n "$RESOLVED" ] || { echo "[!] could not resolve target '$TARGET' (no such IP/var). Pass an IP or one of: dc01 ms01 ms02 t1 t2 t3 ip1.."; exit 1; }
+  TARGET="$RESOLVED"
+else
+  # no explicit target: use the first exam/target var that's set
+  for v in DC01_IP T1_IP T2_IP T3_IP MS01_IP MS02_IP IP1 IP2 IP3; do
+    if [[ -n "${!v:-}" ]]; then TARGET="${!v}"; echo "[*] no target given - using \$$v = $TARGET"; break; fi
+  done
+  [ -n "$TARGET" ] || { echo "[!] no target and no IP vars set. Run: recon <ip>  (or setup_pentest_env first)"; exit 1; }
+fi
+
+# Resolve the box workspace: -w wins, else current dir if it's a box, else DIR_NAME.
+if [ -z "$WS" ]; then
+  if [ -f "$PWD/notes.md" ] && [ -d "$PWD/scans" ]; then
+    WS="$PWD"
+  elif [ -n "${DIR_NAME:-}" ] && [ -d "$HOME/ACTIVE_PENTEST/$DIR_NAME" ]; then
+    WS="$HOME/ACTIVE_PENTEST/$DIR_NAME"
+  fi
+fi
+[ -n "$WS" ] || { echo "[!] no workspace found. cd into a box dir (with notes.md), pass -w <dir>, or run setup_pentest_env."; exit 1; }
+
+echo "[*] ReconX  target=$TARGET  workspace=$WS"
+echo "[*] output -> $WS/scans/reconx/$TARGET/   |   notes -> $WS/notes.md"
+echo
+python3 "$RECONX" "$TARGET" --workspace "$WS" "$@"
+echo
+echo "[+] Done. Ranked per-host notes: $WS/scans/reconx/$TARGET/NOTES.md"
+echo "[+] Merged summary into: $WS/notes.md  (open in Obsidian; feed md2pdf_reportgen for the report)"

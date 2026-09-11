@@ -16,3 +16,8 @@ venv/
 .idea/
 *.swp
 .DS_Store
+
+# local scan artifacts (never publish)
+users.csv
+*.creds
+NOTES.md

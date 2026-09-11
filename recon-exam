@@ -1,0 +1,590 @@
+#!/usr/bin/env python3
+"""
+recon-exam - two-pass automated recon over a whole PakCyberbot project.
+
+The OSCP AD flow, automated on top of ReconX + PakCyberbot:
+
+  Pass 1  unauthenticated ReconX on every target IP, one by one
+            -> learn the domain + hostname of each (LDAP/SMB/RDP/Kerberos)
+  /etc/hosts  offer to add "IP  host  host.domain  domain" (asks Y/N)
+  Pass 2  authenticated ReconX (-u -p/-H -d) on the hosts that have a domain
+            (the AD set); standalone boxes stay Pass-1 only
+
+It reuses everything PakCyberbot already set up: target IP vars + DIR_NAME from
+~/.my_penenv_settings, the ~/ACTIVE_PENTEST/<project> workspace, and ReconX's
+--workspace notes merge. It never exploits anything - recon/enum only.
+
+Usage:
+  recon-exam [-u USER] [-p PASS | -H HASH] [-d DOMAIN] [--quick]
+             [--pass1-only] [--no-hosts] [--yes] [--dry-run]
+             [--targets a,b,c] [-- <extra reconx flags>]
+
+Creds are optional: with none, it does Pass 1 (+ /etc/hosts) and skips Pass 2.
+"""
+
+import argparse
+import concurrent.futures
+import getpass
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+
+HERE = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
+RECONX = os.path.join(HERE, "reconx.py")
+SETTINGS = os.path.expanduser("~/.my_penenv_settings")
+
+G = "\033[32m"; Y = "\033[33m"; R = "\033[31m"; C = "\033[36m"; B = "\033[1m"; D = "\033[2m"; E = "\033[0m"
+if not sys.stdout.isatty() or os.environ.get("NO_COLOR"):
+    G = Y = R = C = B = D = E = ""
+
+
+def info(m): print(f"{C}[recon-exam]{E} {m}", flush=True)
+def good(m): print(f"{G}[recon-exam]{E} {m}", flush=True)
+def warn(m): print(f"{Y}[recon-exam]{E} {m}", flush=True)
+def err(m):  print(f"{R}[recon-exam]{E} {m}", file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------- #
+#  Read PakCyberbot's environment
+# --------------------------------------------------------------------------- #
+_EXPORT_RX = re.compile(r'^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^"\n]*)"?\s*$')
+
+
+def parse_settings(path):
+    data = {}
+    if not os.path.isfile(path):
+        return data
+    with open(path) as f:
+        for line in f:
+            m = _EXPORT_RX.match(line)
+            if m:
+                data[m.group(1)] = m.group(2)
+    return data
+
+
+# order: DC first, then member servers, then standalones, then generic IPn
+_AD_VARS = ["DC01_IP", "MS01_IP", "MS02_IP"]
+_STANDALONE_VARS = ["T1_IP", "T2_IP", "T3_IP"]
+
+
+def ordered_targets(settings):
+    """Return [(varname, ip)] in a sensible attack order, de-duped by IP."""
+    out, seen = [], set()
+
+    def add(var):
+        ip = settings.get(var, "").strip()
+        if ip and ip not in seen:
+            seen.add(ip)
+            out.append((var, ip))
+
+    for v in _AD_VARS + _STANDALONE_VARS:
+        add(v)
+    # any IPn (interactive/file mode) or other *_IP vars
+    for var in settings:
+        if var in _AD_VARS + _STANDALONE_VARS or var == "DIR_NAME":
+            continue
+        if re.match(r"^IP\d+$", var) or var.endswith("_IP"):
+            add(var)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+#  Workspace resolution (reuse PakCyberbot's ~/ACTIVE_PENTEST/<project>)
+# --------------------------------------------------------------------------- #
+_TEMPLATE = """# Target Notes
+
+- **IP:**
+- **Hostname:**
+- **OS:**
+- **Date:**
+
+## Ports / Services
+| Port | Service | Version | Notes |
+|------|---------|---------|-------|
+
+## Enumeration
+- nmap: `scans/nmap_full.txt`
+- web:
+- smb:
+
+## Foothold / Initial Access
+- Vuln:
+- Exploit: `exploits/`
+- Creds:
+
+## Privilege Escalation
+- Vector:
+- Proof:
+
+## Loot / Credentials
+-
+
+## Proof Files
+- local.txt:
+- proof.txt:
+"""
+
+
+def project_base(settings):
+    dir_name = settings.get("DIR_NAME", "").strip()
+    if dir_name:
+        return os.path.expanduser(os.path.join("~/ACTIVE_PENTEST", dir_name))
+    return None
+
+
+def scaffold(ws):
+    os.makedirs(os.path.join(ws, "scans"), exist_ok=True)
+    for sub in ("loot", "exploits", "www", "screenshots"):
+        os.makedirs(os.path.join(ws, sub), exist_ok=True)
+    notes = os.path.join(ws, "notes.md")
+    if not os.path.isfile(notes):
+        with open(notes, "w") as f:
+            f.write(_TEMPLATE)
+    return ws
+
+
+def workspace_for(ip, base, multi, dry=False):
+    """One box per IP. Single-target project uses the project dir directly
+    (already scaffolded by setup_pentest_env); multi-target gets base/<ip>."""
+    ws = os.path.join(base, ip) if multi else base
+    return ws if dry else scaffold(ws)
+
+
+# --------------------------------------------------------------------------- #
+#  Run ReconX
+# --------------------------------------------------------------------------- #
+def run_reconx(ip, ws, extra, creds=None, dry=False, log=None):
+    cmd = [sys.executable, RECONX, ip, "--workspace", ws]
+    if creds:
+        cmd += ["-u", creds["user"]]
+        if creds.get("hash"):
+            cmd += ["-H", creds["hash"]]
+        elif creds.get("password") is not None:
+            cmd += ["-p", creds["password"]]
+        if creds.get("domain"):
+            cmd += ["-d", creds["domain"]]
+    cmd += extra
+    label = "authenticated" if creds else "unauthenticated"
+    info(f"ReconX ({label}) {C}{ip}{E} -> {D}{ws}{E}")
+    if dry:
+        print("   " + D + " ".join(_shellish(cmd)) + E)
+        return 0
+    if log:
+        with open(log, "a") as lf:
+            return subprocess.call(cmd, stdout=lf, stderr=subprocess.STDOUT)
+    return subprocess.call(cmd)
+
+
+def _shellish(cmd):
+    out = []
+    for c in cmd:
+        out.append(f"'{c}'" if (" " in c or "!" in c) else c)
+    return out
+
+
+# --------------------------------------------------------------------------- #
+#  Domain / hostname extraction from ReconX output
+# --------------------------------------------------------------------------- #
+_DN_RX = re.compile(r"(DC=[A-Za-z0-9_-]+(?:,\s*DC=[A-Za-z0-9_-]+)+)", re.I)
+_DNS_DOMAIN_RX = re.compile(r"(?:DNS[_ ]Domain[_ ]Name|Domain[_ ]?Name|dns[_-]?domain)\s*[:=]\s*([A-Za-z0-9._-]+\.[A-Za-z]{2,})", re.I)
+_FQDN_RX = re.compile(r"(?:DNS[_ ]Computer[_ ]Name|DNS[_ ]Host[_ ]Name|Full[_ ]?name|Computer[_ ]DNS[_ ]?Name)\s*[:=]\s*([A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)", re.I)
+_NETBIOS_RX = re.compile(r"(?:NetBIOS[_ ]Computer[_ ]Name|NetBIOS[_ ]?computer[_ ]?name|Target[_ ]Name|Computer[_ ]?Name)\s*[:=]\s*([A-Za-z0-9_-]+)", re.I)
+
+
+def _dn_to_domain(dn):
+    parts = re.findall(r"DC=([^,\s]+)", dn or "", re.I)
+    return ".".join(parts).lower() if parts else None
+
+
+def extract_identity(ip_out_dir):
+    """Scan every text file ReconX wrote for this host; return
+    (domain, fqdn, short_host) with whatever could be found."""
+    domain = fqdn = short = None
+    if not os.path.isdir(ip_out_dir):
+        return domain, fqdn, short
+    for root, _dirs, files in os.walk(ip_out_dir):
+        for fn in files:
+            path = os.path.join(root, fn)
+            try:
+                with open(path, errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if not domain:
+                m = _DNS_DOMAIN_RX.search(text)
+                if m:
+                    domain = m.group(1).lower()
+                else:
+                    m = _DN_RX.search(text)
+                    if m:
+                        domain = _dn_to_domain(m.group(1))
+            if not fqdn:
+                m = _FQDN_RX.search(text)
+                if m and "." in m.group(1):
+                    fqdn = m.group(1).lower()
+            if not short:
+                m = _NETBIOS_RX.search(text)
+                if m:
+                    short = m.group(1).lower()
+    if fqdn and not domain and fqdn.count(".") >= 1:
+        domain = fqdn.split(".", 1)[1]
+    if fqdn and not short:
+        short = fqdn.split(".", 1)[0]
+    if short and domain and not fqdn:
+        fqdn = f"{short}.{domain}"
+    return domain, fqdn, short
+
+
+# --------------------------------------------------------------------------- #
+#  /etc/hosts
+# --------------------------------------------------------------------------- #
+def hosts_line(ip, domain, fqdn, short):
+    tokens = []
+    for t in (short, fqdn, domain):
+        if t and t not in tokens:
+            tokens.append(t)
+    if not tokens:
+        return None
+    return f"{ip}\t{' '.join(tokens)}"
+
+
+def update_etc_hosts(lines, project, assume_yes=False, dry=False):
+    """Add/refresh a managed block in /etc/hosts. Asks before writing (sudo)."""
+    if not lines:
+        info("no domains/hostnames discovered - nothing to add to /etc/hosts")
+        return
+    start = f"# >>> reconx-exam:{project} >>>"
+    end = f"# <<< reconx-exam:{project} <<<"
+    block = "\n".join([start] + lines + [end]) + "\n"
+
+    print()
+    print(f"{B}Proposed /etc/hosts entries:{E}")
+    for ln in lines:
+        print("   " + ln.replace("\t", "  "))
+    print()
+    if dry:
+        info("--dry-run: not writing /etc/hosts")
+        return
+    if not assume_yes:
+        try:
+            ans = input(f"{Y}Add these to /etc/hosts? [y/N] {E}").strip().lower()
+        except EOFError:
+            ans = "n"
+        if ans not in ("y", "yes"):
+            warn("skipped /etc/hosts (you can add the lines above manually)")
+            return
+
+    try:
+        with open("/etc/hosts") as f:
+            current = f.read()
+    except OSError as e:
+        err(f"cannot read /etc/hosts: {e}")
+        return
+    pat = re.compile(re.escape(start) + r".*?" + re.escape(end) + r"\n?", re.S)
+    new = pat.sub(block, current) if pat.search(current) else (current.rstrip("\n") + "\n\n" + block)
+
+    tmp = tempfile.NamedTemporaryFile("w", delete=False, prefix="reconx_hosts_")
+    tmp.write(new)
+    tmp.close()
+    info("writing /etc/hosts (sudo may prompt for your password)...")
+    rc = subprocess.call(["sudo", "cp", tmp.name, "/etc/hosts"])
+    os.unlink(tmp.name)
+    if rc == 0:
+        good(f"/etc/hosts updated ({len(lines)} entr{'y' if len(lines)==1 else 'ies'})")
+    else:
+        err("sudo write failed - add the lines above manually")
+
+
+# --------------------------------------------------------------------------- #
+#  Main
+# --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+#  Project triage dashboard
+# --------------------------------------------------------------------------- #
+_SEV = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
+
+
+def load_state(ws, ip):
+    p = os.path.join(ws, "scans", "reconx", ip, ".reconx_state.json")
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _ports_of(state):
+    out = set()
+    for p in state.get("ports", []):
+        try:
+            out.add(int(p))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def classify_box(state, domain):
+    ports = _ports_of(state)
+    if domain or (ports & {88, 389, 636, 3268}):
+        return "ad"
+    if ports & {3389, 5985, 5986}:
+        return "windows"
+    if ports & {22, 111, 2049}:
+        return "linux"
+    if ports & {135, 139, 445}:
+        return "windows"
+    web = ports & {80, 443, 8080, 8000, 8443, 8180, 8888}
+    if web and len(ports) <= 2:
+        return "web"
+    return "?"
+
+
+def top_finding(state):
+    fs = [f for f in state.get("findings", []) if isinstance(f, (list, tuple)) and len(f) >= 4]
+    fs.sort(key=lambda x: _SEV.get(x[0], 9))
+    return fs[0] if fs else None
+
+
+def first_move(state, ht):
+    ports = _ports_of(state)
+    if ht == "ad":
+        return "LDAP/Kerberos: enum users -> AS-REP/kerberoast; BloodHound"
+    if 21 in ports:
+        return "FTP: anon login, pull files"
+    if ports & {80, 443, 8080, 8000, 8180, 8888}:
+        return "Web: review dir-brute hits + source"
+    if 445 in ports:
+        return "SMB: null/guest shares, mount + grep"
+    if ports & {3306, 5432, 1433}:
+        return "DB: default/weak creds"
+    if 22 in ports:
+        return "SSH: need creds first"
+    return "work the top finding"
+
+
+def build_progress(base, targets, identities, wsmap, settings):
+    rows = []
+    for var, ip in targets:
+        ws = wsmap.get(ip, base)
+        st = load_state(ws, ip)
+        dom = identities.get(ip, (None, None, None))[0]
+        ht = classify_box(st, dom)
+        nports = len(st.get("ports", []))
+        tf = top_finding(st)
+        tftxt = f"{tf[0]} {tf[3]}" if tf else "-"
+        rows.append((ip, ht, nports, tftxt, first_move(st, ht)))
+
+    print(f"{B}==== PROJECT TRIAGE: {settings.get('DIR_NAME')} ===={E}")
+    print(f"  {D}{'IP':<16}{'OS':<8}{'PORTS':>5}  {'TOP FINDING':<40} FIRST MOVE{E}")
+    for ip, ht, n, tf, fm in rows:
+        print(f"  {C}{ip:<16}{E}{ht:<8}{n:>5}  {tf[:38]:<40} {fm}")
+
+    p = os.path.join(base, "PROGRESS.md")
+    try:
+        os.makedirs(base, exist_ok=True)
+        with open(p, "w") as f:
+            f.write(f"# Project triage - {settings.get('DIR_NAME')}\n\n")
+            f.write(f"_updated {datetime.now():%Y-%m-%d %H:%M} by recon-exam_\n\n")
+            f.write("| IP | OS | Ports | Top finding | First move |\n")
+            f.write("|---|---|---|---|---|\n")
+            for ip, ht, n, tf, fm in rows:
+                f.write(f"| `{ip}` | {ht} | {n} | {tf} | {fm} |\n")
+        good(f"triage written: {p}")
+    except OSError as e:
+        warn(f"could not write PROGRESS.md: {e}")
+
+
+def launch_full_background(ip, ws, extra):
+    """Fire a full -p- + UDP ReconX in the background (staged mode); --resume
+    reuses the quick pass's work and just extends it. Notes refresh on finish."""
+    full = [e for e in extra if e != "--quick"]
+    log = os.path.join(ws, "scans", "reconx", ip, "full_scan.log")
+    os.makedirs(os.path.dirname(log), exist_ok=True)
+    cmd = [sys.executable, RECONX, ip, "--workspace", ws, "--resume"] + full
+    lf = open(log, "a")
+    subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    return log
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="recon-exam", add_help=True,
+        description="Two-pass automated ReconX over a PakCyberbot project.")
+    ap.add_argument("-u", "--user")
+    ap.add_argument("-p", "--password")
+    ap.add_argument("-H", "--hash")
+    ap.add_argument("-d", "--domain", help="override/force the domain for Pass 2")
+    ap.add_argument("--targets", help="comma-separated IPs (overrides settings)")
+    ap.add_argument("--quick", action="store_true", help="pass --quick to ReconX")
+    ap.add_argument("--pass1-only", action="store_true", help="skip the authenticated pass")
+    ap.add_argument("--no-hosts", action="store_true", help="don't touch /etc/hosts")
+    ap.add_argument("--yes", action="store_true", help="assume yes for /etc/hosts")
+    ap.add_argument("--dry-run", action="store_true", help="show the plan, run nothing")
+    ap.add_argument("--creds-file", help="read USER\\nPASS_or_:HASH\\nDOMAIN from a 600 file, then delete it")
+    ap.add_argument("--staged", action="store_true",
+                    help="fast top-1000 pass now, then full -p- + UDP in the background")
+    ap.add_argument("--parallel", type=int, default=1, metavar="N",
+                    help="scan N hosts at once in Pass 1 (default 1; output captured per-host)")
+    args, extra = ap.parse_known_args(argv)
+    # allow `-- <reconx flags>`; argparse leaves them in `extra`
+    extra = [e for e in extra if e != "--"]
+    if args.quick and "--quick" not in extra:
+        extra.append("--quick")
+
+    # creds from a temp file (how setup_pentest_env hands them over safely)
+    if args.creds_file and os.path.isfile(args.creds_file):
+        try:
+            with open(args.creds_file) as f:
+                rows = [r.rstrip("\n") for r in f.readlines()]
+            args.user = args.user or (rows[0] if len(rows) > 0 and rows[0] else None)
+            secret = rows[1] if len(rows) > 1 else ""
+            if secret.startswith(":") or re.match(r"^[0-9a-fA-F]{32}(:[0-9a-fA-F]{32})?$", secret):
+                args.hash = args.hash or secret
+            elif secret:
+                args.password = args.password if args.password is not None else secret
+            if len(rows) > 2 and rows[2]:
+                args.domain = args.domain or rows[2]
+        finally:
+            try: os.unlink(args.creds_file)
+            except OSError: pass
+
+    settings = parse_settings(SETTINGS)
+    base = project_base(settings)
+    if not base:
+        err("no project found. Run setup_pentest_env first (need DIR_NAME in "
+            f"{SETTINGS}), or pass --targets with a workspace.")
+        return 2
+    if not os.path.isdir(base):
+        err(f"project dir not found: {base}")
+        return 2
+
+    if args.targets:
+        targets = [(f"IP{i+1}", ip.strip()) for i, ip in enumerate(args.targets.split(",")) if ip.strip()]
+    else:
+        targets = ordered_targets(settings)
+    if not targets:
+        err("no target IPs found in settings. Add some with setup_pentest_env, or use --targets.")
+        return 2
+
+    creds = None
+    if args.user:
+        if args.password is None and not args.hash and not args.dry_run:
+            try:
+                args.password = getpass.getpass(f"[recon-exam] password for {args.user}: ")
+            except EOFError:
+                pass
+        creds = {"user": args.user, "password": args.password,
+                 "hash": args.hash, "domain": args.domain}
+
+    multi = len(targets) > 1
+    info(f"project {B}{settings.get('DIR_NAME')}{E}  ·  {len(targets)} target(s)  ·  "
+         f"{'creds: ' + args.user if creds else 'no creds (Pass 1 only)'}")
+    print()
+
+    # staged: quick pass now, full -p-/UDP backgrounded at the end
+    pass1_extra = list(extra)
+    if args.staged and "--quick" not in pass1_extra:
+        pass1_extra.append("--quick")
+
+    # ---- PASS 1: unauthenticated ----
+    hdr = "==== PASS 1: unauthenticated recon ===="
+    if args.staged:
+        hdr += "  (staged: quick now, full in background)"
+    print(f"{B}{hdr}{E}")
+    identities = {}          # ip -> (domain, fqdn, short)
+    wsmap = {}               # ip -> workspace
+
+    def do_pass1(var, ip):
+        ws = workspace_for(ip, base, multi, dry=args.dry_run)
+        wsmap[ip] = ws
+        log = None
+        if args.parallel > 1 and not args.dry_run:
+            log = os.path.join(ws, "scans", "reconx", ip, "recon-exam_pass1.log")
+            os.makedirs(os.path.dirname(log), exist_ok=True)
+        run_reconx(ip, ws, pass1_extra, creds=None, dry=args.dry_run, log=log)
+        dom, fqdn, short = extract_identity(os.path.join(ws, "scans", "reconx", ip))
+        if args.domain:
+            dom = dom or args.domain
+        identities[ip] = (dom, fqdn, short)
+        return ip, log
+
+    if args.parallel > 1 and len(targets) > 1 and not args.dry_run:
+        info(f"scanning {len(targets)} hosts, {args.parallel} at a time "
+             f"(live output -> per-host logs)")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as ex:
+            futs = {ex.submit(do_pass1, v, ip): ip for v, ip in targets}
+            for fut in concurrent.futures.as_completed(futs):
+                ip, log = fut.result()
+                st = load_state(wsmap[ip], ip)
+                dom, fqdn, short = identities[ip]
+                good(f"{ip}: done - {len(st.get('ports', []))} ports, "
+                     f"domain={dom or '-'}, host={fqdn or short or '-'}"
+                     + (f"  ({log})" if log else ""))
+    else:
+        for var, ip in targets:
+            do_pass1(var, ip)
+            dom, fqdn, short = identities[ip]
+            if dom or short:
+                good(f"{ip}: domain={dom or '?'}  host={fqdn or short or '?'}")
+            else:
+                info(f"{ip}: no domain/hostname surfaced (likely standalone)")
+    print()
+
+    # ---- project triage dashboard ----
+    if not args.dry_run:
+        build_progress(base, targets, identities, wsmap, settings)
+        print()
+
+    # ---- /etc/hosts ----
+    if not args.no_hosts:
+        lines = []
+        for var, ip in targets:
+            dom, fqdn, short = identities[ip]
+            ln = hosts_line(ip, dom, fqdn, short)
+            if ln:
+                lines.append(ln)
+        update_etc_hosts(lines, settings.get("DIR_NAME", "exam").replace("/", "_"),
+                         assume_yes=args.yes, dry=args.dry_run)
+        print()
+
+    # ---- PASS 2: authenticated, only on hosts that revealed a domain ----
+    if creds and not args.pass1_only:
+        ad_targets = [(v, ip) for (v, ip) in targets if identities[ip][0]]
+        if ad_targets:
+            print(f"{B}==== PASS 2: authenticated recon (domain hosts) ===={E}")
+            for var, ip in ad_targets:
+                dom = args.domain or identities[ip][0]
+                ws = wsmap.get(ip) or workspace_for(ip, base, multi, dry=args.dry_run)
+                run_reconx(ip, ws, extra, creds={**creds, "domain": dom}, dry=args.dry_run)
+            print()
+            if not args.dry_run:
+                build_progress(base, targets, identities, wsmap, settings)
+                print()
+        else:
+            warn("no host revealed a domain - nothing to run authenticated.")
+    elif not creds:
+        info("no creds given - skipping Pass 2 (authenticated).")
+
+    # ---- staged: launch the full background scans ----
+    if args.staged and not args.dry_run:
+        print(f"{B}==== STAGED: full -p- + UDP now running in the background ===={E}")
+        for var, ip in targets:
+            ws = wsmap.get(ip, base)
+            log = launch_full_background(ip, ws, extra)
+            info(f"{ip}: full scan backgrounded -> {log}  (notes refresh when done)")
+        print()
+
+    good("done. Findings in each box's notes.md; raw output under scans/reconx/; "
+         "triage in PROGRESS.md.")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        print("\n[recon-exam] interrupted.", file=sys.stderr)
+        sys.exit(130)
