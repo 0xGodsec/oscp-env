@@ -18,6 +18,8 @@ cd oscp-env && ./install.sh          # add --no-notes to skip the vault clone
 | `reconx/` | **ReconX** — the recon/enum engine. Fast parallel port discovery, targeted per-service enumeration, automated web dir-busting, ranked findings, and `recon` / `recon-exam` launchers that file everything into the box workspace + notes. |
 | `exam-harness/` | Exam-day helpers: proof/flag tally, report templates, listener/serve/bloodhound scripts, and a servable toolkit (`serve/`). |
 | `install.sh` | One-command setup for a fresh machine. |
+| `docs/` | Field references: command quick-reference, code/exploits, and the exam-day runbook (build as a site with `mkdocs serve`). |
+
 
 `install.sh` also clones the methodology vault (`0xGodsec/OSCP-Notes`) to
 `~/Desktop/Notes` and points ReconX at it, so its findings link straight into
