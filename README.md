@@ -7,6 +7,38 @@ accuracy, runs *targeted* per-service enumeration concurrently, then prints a
 
 > Authorized targets only: your own lab, HTB / PG / THM, or written permission.
 
+## Quickstart
+
+```bash
+# 1. Install the launchers (optional; matches PakCyberbot's /usr/local/bin pattern)
+sudo ln -sf "$PWD/recon"      /usr/local/bin/recon
+sudo ln -sf "$PWD/recon-exam" /usr/local/bin/recon-exam
+sudo cp integration/setup_pentest_env /usr/local/bin/setup_pentest_env   # PakCyberbot hook
+```
+
+**Scan one box** (standalone — no PakCyberbot needed):
+
+```bash
+python3 reconx.py 10.10.10.10            # full pipeline -> ranked summary + reconx-results/
+python3 reconx.py 10.10.10.10 --quick    # top-1000 ports, fast
+```
+
+**Inside the PakCyberbot OSCP environment** (recon lands in the box's workspace + notes.md):
+
+```bash
+recon 10.10.10.10          # one box -> ~/ACTIVE_PENTEST/<box>/{scans/reconx,notes.md}
+recon-exam                 # every target in the project: unauth pass + /etc/hosts + triage
+recon-exam -u alex -p 'Pw!' --staged --parallel 3
+#   two-pass AD flow: quick scan of all boxes at once -> learn domains -> /etc/hosts ->
+#   authenticated pass on the AD hosts -> full -p-/UDP finishes in the background
+```
+
+**What you get, per box:** raw per-service output under `scans/reconx/<ip>/`, findings merged
+into `notes.md`, a ranked "look first" summary, and a project `PROGRESS.md` triage table.
+
+See [`integration/`](integration/) for the PakCyberbot `setup_pentest_env` hook, and
+`python3 reconx.py --man` for the full manual.
+
 ## Why this instead of AutoRecon
 
 | Problem with heavy scanners | What reconx does |
