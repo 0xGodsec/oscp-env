@@ -1,23 +1,28 @@
-# reconx scan output
-reconx-results/
+# secrets — never commit
+.htpasswd
+htpasswd.hash
+*.key
+id_rsa*
+*.creds
+
+# recon output / loot / runtime
+reconx/reconx-results/
+**/scans/reconx/
+exam-harness/loot/
+exam-harness/logs/
+exam-harness/targets/*/
 loot/
 *.log
+users.csv
 
 # python
 __pycache__/
 *.py[cod]
-*.egg-info/
 .venv/
 venv/
-.env
 
 # editor / OS
 .vscode/
 .idea/
 *.swp
 .DS_Store
-
-# local scan artifacts (never publish)
-users.csv
-*.creds
-NOTES.md
