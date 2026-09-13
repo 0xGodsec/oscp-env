@@ -127,12 +127,16 @@ installed; without the flag reconx just prints the manual command to run).
 2. **Accuracy pass** — `nmap -sCV` on *confirmed* ports for real service/version,
    with a top-100 UDP scan in parallel.
 3. **Targeted enumeration** — dispatches per-service modules concurrently:
-   - **SMB/AD** (139/445/389/88): netexec shares+users, enum4linux-ng, smbclient, ldapsearch anon dump, DC detection
+   - **SMB/AD** (139/445/389/88): netexec shares+users, enum4linux-ng, smbclient, ldapsearch anon dump, DC detection; *authenticated* adds share **content spidering** (`spider_plus` — inventories accessible files, no download)
    - **Remote access** (21/22/23/3389/5985): FTP anon, SSH NSE, RDP NTLM info, WinRM note
    - **DB & misc** (1433/5432/6379/161/25/53/2049): MSSQL, **PostgreSQL** (default-cred sweep + psql probe), Redis, SNMP walk, SMTP user-enum, NFS exports, DNS
    - **Mail** (110/995 POP3, 143/993 IMAP): NSE capabilities + banner/CAPABILITY grab (TLS-aware via openssl), cred-reuse hints
 4. **Findings engine** — regex rules classify output into CRITICAL / HIGH /
-   MEDIUM / INFO, deduped and ranked.
+   MEDIUM / INFO, deduped and ranked. A filename heuristic also ranks juicy
+   files out of the authenticated share-spider inventory (private keys / `.kdbx`,
+   GPP `Groups.xml` / `unattend.xml` / `web.config` → CRITICAL; `.env` / creds /
+   `*.ovpn` → HIGH; backups & scripts → MEDIUM), naming the share and path — by
+   filename only, the files themselves are never opened.
 5. **Output** — colored terminal summary + ranked findings + suggested next
    steps, plus a per-host `scans/` tree and a `NOTES.md` for your report.
 
