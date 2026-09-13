@@ -991,6 +991,17 @@ async def enum_smb(host, runner, args, findings):
                 rc, out = await runner.run(f"{nxc} smb {host} {auth} {sub}",
                                            f"{tag}/auth_nxc{sub.replace('-','')}.txt", f"{nxc} smb {sub}")
                 scan_findings(out, "smb", 445, findings)
+            # Spider readable shares for accessible files - creds live in share
+            # CONTENT, not share names. spider_plus is metadata-only (no download
+            # by default) and writes a full per-file JSON inventory into the box's
+            # smb/ dir; we tee its stdout summary and scan it for findings. Slow on
+            # big shares, so it gets the longer enum timeout and runs last.
+            spider_dir = os.path.join(runner.outdir, tag)
+            rc, out = await runner.run(
+                f"{nxc} smb {host} {auth} -M spider_plus -o OUTPUT_FOLDER='{spider_dir}'",
+                f"{tag}/auth_nxc_spider_plus.txt", f"{nxc} smb -M spider_plus",
+                timeout=args.enum_timeout)
+            scan_findings(out, "smb", 445, findings)
         else:
             findings.append(Finding("MEDIUM", "smb", 445,
                 "Creds supplied but no netexec/nxc found - authenticated SMB untested"))
