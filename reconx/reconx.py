@@ -33,6 +33,7 @@ Author: built with OffSec-OS (OSCP mentor). MIT-style, hack freely.
 import argparse
 import asyncio
 import functools
+import glob
 import ipaddress
 import itertools
 import json
@@ -966,6 +967,53 @@ def scan_findings(text, default_service, port, findings):
             findings.append(Finding(sev, svc_hint or default_service, port, msg))
 
 
+# Juicy filenames worth flagging when spider_plus inventories a share - the
+# files that most often hold creds/keys on an OSCP box. Each spidered file
+# PATH is tested against these (case-insensitive), most valuable first; the
+# first match wins so one file yields one finding at its highest severity.
+# This is a filename heuristic only - reconx never opens/downloads the files.
+_SPIDER_JUICY_RULES = [
+    ("CRITICAL", re.compile(r"(?:^|[\\/])(id_rsa|id_dsa|id_ecdsa|id_ed25519)$|\.(kdbx?|ppk|pem|pfx|p12)$", re.I),
+     "private key / password vault"),
+    ("CRITICAL", re.compile(r"(?:^|[\\/])(groups\.xml|unattend\.xml|autounattend\.xml|sysprep\.(inf|xml)|web\.config)$", re.I),
+     "config with embedded/recoverable creds"),
+    ("HIGH", re.compile(r"(?:^|[\\/])(\.git-credentials|\.npmrc|\.env|credentials?|secrets?)(\.\w+)?$|passwo?r?d|\.(ovpn|rdp)$", re.I),
+     "credential-bearing file"),
+    ("MEDIUM", re.compile(r"\.(bak|old|sql|dump)$|backup", re.I),
+     "backup / dump (may hold creds or data)"),
+    ("MEDIUM", re.compile(r"\.(ps1|bat|cmd|vbs|sh)$", re.I),
+     "script (often hardcodes creds/paths)"),
+]
+
+
+def _spider_findings(spider_json, findings, limit=40):
+    """Parse a netexec spider_plus JSON inventory ({share: {path: meta}}) and
+    flag juicy files by name via _SPIDER_JUICY_RULES. Names the share + path so
+    the finding is actionable. Caps at `limit` hits so a share full of e.g.
+    .bak files can't drown the summary. Degrades silently on a missing/odd file."""
+    try:
+        with open(spider_json, errors="replace") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    hits = 0
+    for share, files in data.items():
+        if not isinstance(files, dict):
+            continue
+        for path in files:
+            for sev, rx, why in _SPIDER_JUICY_RULES:
+                if rx.search(path):
+                    findings.append(Finding(sev, "smb", 445,
+                        f"Juicy file on \\\\{share}: {path} ({why})"))
+                    hits += 1
+                    break
+            if hits >= limit:
+                warn(f"spider: {limit}+ juicy files flagged - review {spider_json} for the rest")
+                return
+
+
 # --------------------------------------------------------------------------- #
 #  Enumeration modules - each returns nothing, appends to findings list
 # --------------------------------------------------------------------------- #
@@ -1002,6 +1050,11 @@ async def enum_smb(host, runner, args, findings):
                 f"{tag}/auth_nxc_spider_plus.txt", f"{nxc} smb -M spider_plus",
                 timeout=args.enum_timeout)
             scan_findings(out, "smb", 445, findings)
+            # Rank juicy files out of the inventory spider_plus just wrote
+            # (filename heuristic only - files aren't opened). The exact JSON
+            # name is version-dependent, so scan any .json in the smb/ dir.
+            for sj in glob.glob(os.path.join(spider_dir, "*.json")):
+                _spider_findings(sj, findings)
         else:
             findings.append(Finding("MEDIUM", "smb", 445,
                 "Creds supplied but no netexec/nxc found - authenticated SMB untested"))
