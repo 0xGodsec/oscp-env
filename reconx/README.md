@@ -127,9 +127,14 @@ installed; without the flag reconx just prints the manual command to run).
 2. **Accuracy pass** — `nmap -sCV` on *confirmed* ports for real service/version,
    with a top-100 UDP scan in parallel.
 3. **Targeted enumeration** — dispatches per-service modules concurrently:
-   - **SMB/AD** (139/445/389/88): netexec shares+users, enum4linux-ng, smbclient, ldapsearch anon dump, DC detection; *authenticated* adds share **content spidering** (`spider_plus` — inventories accessible files, no download)
-   - **Remote access** (21/22/23/3389/5985): FTP anon, SSH NSE, RDP NTLM info, WinRM note
-   - **DB & misc** (1433/5432/6379/161/25/53/2049): MSSQL, **PostgreSQL** (default-cred sweep + psql probe), Redis, SNMP walk, SMTP user-enum, NFS exports, DNS
+   - **SMB/AD** (139/445/389/88/135): netexec shares/users/groups/policy + `--rid-brute` over null & guest sessions, enum4linux-ng, smbclient, ldapsearch anon dump, DC detection; *authenticated* adds full netexec enum (sessions/disks/computers/LAPS + `gpp_password`/`enum_av` modules), share **content spidering** (`spider_plus`), and — with confirmed admin — `--sam`/`--lsa`/`--dpapi`/`--ntds` dumping and `-x` command-execution proof. LDAP authed runs the full AD sweep: asrep/kerberoast, delegation, weak-UAC accounts, gMSA, `adcs`/ESC, `maq`, user-description creds
+   - **Remote access** (21/22/23/3389/5985/5900): FTP anon (+nxc `--ls`), SSH NSE + netexec `--sudo-check`/exec, RDP NTLM info + nxc banner, WinRM banner→(authed) dump+exec, VNC no-auth detection
+   - **DB & misc** (1433/5432/6379/161/25/53/2049): MSSQL (auth + sa/blank sweep, authed `--query`/`--rid-brute`/dump/xp_cmdshell), **PostgreSQL** (default-cred sweep + psql probe), Redis, SNMP walk, SMTP user-enum, NFS exports (+nxc `--shares`), DNS
+
+   > netexec is used across **every** protocol it supports. Read-only enumeration
+   > runs whenever the service is up; credential **dumping** and **command
+   > execution** only fire once you supply working creds (and, for the loudest
+   > paths — `--ntds`, `-x` — only after admin/`Pwn3d!` is confirmed).
    - **Mail** (110/995 POP3, 143/993 IMAP): NSE capabilities + banner/CAPABILITY grab (TLS-aware via openssl), cred-reuse hints
 4. **Findings engine** — regex rules classify output into CRITICAL / HIGH /
    MEDIUM / INFO, deduped and ranked. A filename heuristic also ranks juicy
