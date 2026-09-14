@@ -574,14 +574,32 @@ async def discover_ports(host, runner, args):
             # host's or firewall's rate-limiting and silently drop every probe -
             # confirmed directly: scanme.nmap.org dropped 100% of connections at
             # concurrency=100 despite having open ports, but succeeded reliably
-            # at 20. One retry at a much lower concurrency is what distinguishes
-            # "truly no open ports" from "got rate-limited" before reporting a
-            # live host as down.
-            warn(f"0 ports found at concurrency={args.concurrency} - retrying at "
-                 f"concurrency={RETRY_SCAN_CONCURRENCY} in case of rate-limiting")
-            found = await async_port_scan(host, list(port_list),
+            # at 20. Re-probe at a much lower concurrency to distinguish "truly
+            # no open ports" from "got rate-limited" - but BOUND the probe to a
+            # TOP_1000 confirmation subset. A full -p- retry at concurrency 20
+            # is ~65535/20 x host_timeout, i.e. ~80 min on a genuinely-down host
+            # (exactly when this path fires), so only commit to a full-range
+            # low-concurrency sweep once the cheap subset proves throttling is
+            # real. If the subset stays empty, fall through to the nmap fallback
+            # below (nmap's retransmission is the accuracy authority anyway) so
+            # a dead host costs seconds here, not tens of minutes.
+            confirm_ports = list(port_list) if bounded else TOP_1000
+            warn(f"0 ports found at concurrency={args.concurrency} - re-probing "
+                 f"{len(confirm_ports)} common ports at concurrency="
+                 f"{RETRY_SCAN_CONCURRENCY} in case of rate-limiting")
+            found = await async_port_scan(host, confirm_ports,
                                           concurrency=RETRY_SCAN_CONCURRENCY,
                                           timeout=args.host_timeout)
+            if found and not bounded:
+                # Throttling confirmed on the subset: a full-range sweep at low
+                # concurrency is now worth its cost (real open ports are being
+                # dropped by the burst, not simply absent).
+                warn(f"rate-limiting confirmed ({len(found)} port(s) on the "
+                     f"subset) - full-range sweep at concurrency="
+                     f"{RETRY_SCAN_CONCURRENCY}")
+                found = await async_port_scan(host, list(port_list),
+                                              concurrency=RETRY_SCAN_CONCURRENCY,
+                                              timeout=args.host_timeout)
         ports.update(found)
 
     # nmap: confirm the fast result on bounded scopes (cheap, catches throttled
