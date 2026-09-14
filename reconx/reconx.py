@@ -1568,6 +1568,13 @@ async def enum_winrm(host, port, runner, args, findings):
             findings.append(Finding("MEDIUM", "winrm", port,
                 "WinRM open - creds supplied but netexec/nxc not found, credential untested here"))
         return
+    # No creds: still run an unauthenticated nxc banner grab - it leaks the
+    # hostname / domain / OS build even without a login, which seeds AD recon.
+    nxc = nxc_bin()
+    if nxc:
+        rc, out = await runner.run(f"{nxc} winrm {host}",
+                                   f"{host}/winrm/nxc.txt", "nxc-winrm")
+        scan_findings(out, "winrm", port, findings)
     findings.append(Finding("MEDIUM", "winrm", port,
                             "WinRM open - if you get creds, use evil-winrm for a shell"))
 
@@ -1579,13 +1586,19 @@ async def enum_rdp(host, port, runner, args, findings):
         m = re.search(r"(DNS_Domain_Name|Target_Name|NetBIOS_Domain_Name):\s*(\S+)", out or "")
         if m:
             findings.append(Finding("MEDIUM", "rdp", port, f"RDP NTLM info leaks: {m.group(2)}"))
+    nxc = nxc_bin()
     if have_creds(args):
-        nxc = nxc_bin()
         if nxc:
             await _nxc_authed_check(nxc, "rdp", host, port, runner, findings, args,
                 f"{host}/rdp/auth_nxc.txt", "nxc-rdp-auth",
                 success=Finding("HIGH", "rdp", port,
                     f"RDP login works: xfreerdp /u:{args.user} /p:<pass> /v:{host} /cert:ignore"))
+    elif nxc:
+        # No creds: unauthenticated nxc banner grab - hostname / domain / OS
+        # build and NLA status, complementing the nmap NTLM-info NSE above.
+        rc, out = await runner.run(f"{nxc} rdp {host}",
+                                   f"{host}/rdp/nxc.txt", "nxc-rdp")
+        scan_findings(out, "rdp", port, findings)
 
 
 # --------------------------------------------------------------------------- #
