@@ -1084,36 +1084,82 @@ async def _nmap_nse(host, port, scripts, proto, runner, tag, findings, timeout=N
     return out
 
 
+_SMB_BANNER_NAME_RX = re.compile(r"\(name:([^)]*)\)")
+_SMB_BANNER_DOMAIN_RX = re.compile(r"\(domain:([^)]*)\)")
+_SMB_BANNER_ISDC_RX = re.compile(r"\(DC:True\)")
+
+
+def _hosts_line_from_banner(host, out):
+    """Build netexec's own hosts-line format from an SMB banner line, e.g.
+    'SMB ... (name:DC) (domain:northstone.local) ... (DC:True)' ->
+    '<ip>  DC.northstone.local northstone.local DC'. Returns '' if the banner
+    lacks a usable name/domain. Mirrors netexec: the bare domain only appears
+    (as the middle field) for a Domain Controller."""
+    nm = _SMB_BANNER_NAME_RX.search(out or "")
+    dm = _SMB_BANNER_DOMAIN_RX.search(out or "")
+    if not (nm and dm and nm.group(1) and dm.group(1)):
+        return ""
+    name, domain = nm.group(1).strip(), dm.group(1).strip()
+    dc_part = f" {domain}" if _SMB_BANNER_ISDC_RX.search(out or "") else ""
+    return f"{host}     {name}.{domain}{dc_part} {name}"
+
+
 async def _smb_hosts_file(nxc, host, runner, args, findings):
     """Emit an ACCURATE /etc/hosts line straight from the SMB banner via
     netexec's --generate-hosts-file, instead of guessing the domain from a
-    reverse-PTR label (often wrong). netexec writes the line during pre-auth
-    host-info enumeration, so it works over a null/guest session:
+    reverse-PTR label (often wrong). netexec writes the line during host-info
+    enumeration, so it works over a null/guest session:
         IP    HOSTNAME.domain [domain-if-DC] HOSTNAME
-    Add the whole line to /etc/hosts in one shot - no need to hand-assemble it."""
+    Add the whole line to /etc/hosts in one shot - no need to hand-assemble it.
+
+    Robustness: netexec's first invocation can transiently return nothing under
+    reconx's concurrency (cold DB init), so we retry once; and if it printed the
+    banner but wrote no file (e.g. the guest login errored STATUS_ACCOUNT_DISABLED
+    before the file write on some paths), we assemble the identical line from the
+    banner ourselves."""
     tag = f"{host}/smb"
     hosts_path = os.path.join(runner.outdir, host, "smb", "hosts")
-    # netexec appends (a+); drop a stale file from a previous/resumed run so we
-    # read back exactly this host's line and don't accumulate duplicates.
-    if not runner.dry_run:
-        try:
-            os.makedirs(os.path.dirname(hosts_path), exist_ok=True)
-            if os.path.exists(hosts_path):
-                os.remove(hosts_path)
-        except OSError:
-            pass
     auth = nxc_auth(args) if have_creds(args) else "-u guest -p ''"
-    await runner.run(
-        f"{nxc} smb {host} {auth} --generate-hosts-file {shlex.quote(hosts_path)}",
-        f"{tag}/nxc_hosts.txt", f"{nxc} smb --generate-hosts-file")
+
+    def _read_line():
+        try:
+            with open(hosts_path, errors="replace") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    async def _attempt():
+        # netexec appends (a+); drop a stale file first so we read back exactly
+        # this host's line and don't accumulate duplicates across retries/resume.
+        if not runner.dry_run:
+            try:
+                os.makedirs(os.path.dirname(hosts_path), exist_ok=True)
+                if os.path.exists(hosts_path):
+                    os.remove(hosts_path)
+            except OSError:
+                pass
+        _, out = await runner.run(
+            f"{nxc} smb {host} {auth} --generate-hosts-file {shlex.quote(hosts_path)}",
+            f"{tag}/nxc_hosts.txt", f"{nxc} smb --generate-hosts-file")
+        return out or ""
+
+    out = await _attempt()
     if runner.dry_run:
         return
-    line = ""
-    try:
-        with open(hosts_path, errors="replace") as f:
-            line = f.read().strip()
-    except OSError:
-        line = ""
+    line = _read_line()
+    # nothing at all (not even a banner) -> transient; one serial retry.
+    if not line and not _SMB_BANNER_NAME_RX.search(out):
+        out = await _attempt()
+        line = _read_line()
+    # banner seen but no file written -> build the line ourselves.
+    if not line:
+        line = _hosts_line_from_banner(host, out)
+        if line:
+            try:
+                with open(hosts_path, "w") as f:
+                    f.write(line + "\n")
+            except OSError:
+                pass
     if line:
         findings.append(Finding("INFO", "smb", 445,
             f"/etc/hosts entry (SMB-derived, accurate): {line}   "
