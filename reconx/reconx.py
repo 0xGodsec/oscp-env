@@ -950,8 +950,10 @@ def cred_label(args):
 # --------------------------------------------------------------------------- #
 FINDING_RULES = [
     # (severity, compiled_regex, service_hint, message_template)
-    ("CRITICAL", re.compile(r"Anonymous( FTP)? login (allowed|successful|ok)", re.I), "ftp", "Anonymous FTP login allowed"),
-    ("CRITICAL", re.compile(r"\|_?ftp-anon:.*Anonymous", re.I), "ftp", "nmap confirms anonymous FTP"),
+    # NOTE: anonymous-FTP is NOT flagged by a loose regex here - a banner like
+    # "220 Anonymous access allowed, send email as password" or nxc's own
+    # failure lines would false-positive. enum_ftp() confirms it explicitly
+    # (curl exit code / nmap "login allowed" / netexec "Anonymous Login!").
     ("HIGH",     re.compile(r"vsftpd 2\.3\.4", re.I), "ftp", "vsftpd 2.3.4 - backdoor (CVE-2011-2523)"),
     # Must match a *confirmed* null session, not just the phrase "null session"
     # appearing in a failure message like "Could not establish null session: ...".
@@ -1082,9 +1084,47 @@ async def _nmap_nse(host, port, scripts, proto, runner, tag, findings, timeout=N
     return out
 
 
+async def _smb_hosts_file(nxc, host, runner, args, findings):
+    """Emit an ACCURATE /etc/hosts line straight from the SMB banner via
+    netexec's --generate-hosts-file, instead of guessing the domain from a
+    reverse-PTR label (often wrong). netexec writes the line during pre-auth
+    host-info enumeration, so it works over a null/guest session:
+        IP    HOSTNAME.domain [domain-if-DC] HOSTNAME
+    Add the whole line to /etc/hosts in one shot - no need to hand-assemble it."""
+    tag = f"{host}/smb"
+    hosts_path = os.path.join(runner.outdir, host, "smb", "hosts")
+    # netexec appends (a+); drop a stale file from a previous/resumed run so we
+    # read back exactly this host's line and don't accumulate duplicates.
+    if not runner.dry_run:
+        try:
+            os.makedirs(os.path.dirname(hosts_path), exist_ok=True)
+            if os.path.exists(hosts_path):
+                os.remove(hosts_path)
+        except OSError:
+            pass
+    auth = nxc_auth(args) if have_creds(args) else "-u guest -p ''"
+    await runner.run(
+        f"{nxc} smb {host} {auth} --generate-hosts-file {shlex.quote(hosts_path)}",
+        f"{tag}/nxc_hosts.txt", f"{nxc} smb --generate-hosts-file")
+    if runner.dry_run:
+        return
+    line = ""
+    try:
+        with open(hosts_path, errors="replace") as f:
+            line = f.read().strip()
+    except OSError:
+        line = ""
+    if line:
+        findings.append(Finding("INFO", "smb", 445,
+            f"/etc/hosts entry (SMB-derived, accurate): {line}   "
+            f"(sudo sh -c 'echo \"{line}\" >> /etc/hosts'; saved to {hosts_path})"))
+
+
 async def enum_smb(host, runner, args, findings):
     tag = f"{host}/smb"
     nxc = nxc_bin()
+    if nxc:
+        await _smb_hosts_file(nxc, host, runner, args, findings)
     if have_creds(args):
         # authenticated: check access, admin (Pwn3d!), shares, users, and loot.
         if nxc:
@@ -1361,24 +1401,47 @@ async def enum_ldap(host, port, runner, args, findings, queue):
 
 
 async def enum_ftp(host, port, runner, args, findings):
+    """Anonymous login is only flagged on POSITIVE proof, from any of three
+    independent sources, so a chatty banner ("Anonymous access allowed, send
+    email as password") or a tool's failure message can't false-positive it:
+      - nmap ftp-anon prints "Anonymous FTP login allowed",
+      - curl exits 0 (login AND the LIST both succeeded), or
+      - netexec prints its "- Anonymous Login!" success line."""
     tag = f"{host}/ftp"
+    anon_ok = False
+    evidence = None
     if TOOLS.get("nmap"):
-        await _nmap_nse(host, port, "ftp-anon,ftp-syst", "ftp", runner, tag, findings)
+        out = await _nmap_nse(host, port, "ftp-anon,ftp-syst", "ftp", runner, tag, findings)
+        if out and re.search(r"ftp-anon:.*login allowed", out, re.I):
+            anon_ok, evidence = True, "nmap ftp-anon"
     if TOOLS.get("curl"):
-        rc, out = await runner.run(f"curl -s --max-time 15 ftp://anonymous:anonymous@{host}:{port}/",
+        # -sS keeps the failure reason in the saved file; the finding is gated
+        # on curl's exit code, which is 0 ONLY when the anonymous login and the
+        # directory LIST both succeed (an empty listing still exits 0 = allowed).
+        rc, out = await runner.run(f"curl -sS --max-time 15 ftp://anonymous:anonymous@{host}:{port}/",
                                    f"{tag}/anon_list.txt", "ftp-anon-curl")
-        if out and out.strip():
-            findings.append(Finding("CRITICAL", "ftp", port, "Anonymous FTP login allowed (directory listed)"))
+        if rc == 0:
+            anon_ok = True
+            evidence = evidence or "curl directory listing"
     nxc = nxc_bin()
     if nxc:
-        # nxc confirms + lists anonymous FTP, and lists the tree with supplied
-        # creds - a second opinion alongside nmap/curl.
+        # nxc lists the tree with supplied creds, and gives a second opinion on
+        # anonymous access alongside nmap/curl.
         if have_creds(args):
             await _nxc_enum(nxc, "ftp", host, runner, findings, port, ("--ls",),
                             tag, auth=nxc_auth(args), prefix="auth_nxc")
         rc, out = await runner.run(f"{nxc} ftp {host} -u anonymous -p '' --ls",
                                    f"{tag}/nxc_anon.txt", f"{nxc} ftp anon")
-        scan_findings(out, "ftp", port, findings)
+        # Only netexec's explicit success line counts - not a banner that merely
+        # contains the word "anonymous", and not nxc's "(Response: ...)" failures.
+        if out and re.search(r"-\s*Anonymous Login!", out, re.I):
+            anon_ok = True
+            evidence = evidence or "netexec"
+        scan_findings(out, "ftp", port, findings)   # still catches vsftpd 2.3.4 etc.
+    if anon_ok:
+        findings.append(Finding("CRITICAL", "ftp", port,
+            f"Anonymous FTP login allowed ({evidence}) - pull every file, "
+            f"check for creds/config/web-root overlap"))
     good("ftp enum done")
 
 
@@ -2033,10 +2096,16 @@ def suggest_next(services, findings, host_profile, args=None):
         if any(re.search(r"\(Pwn3d!\)|login works|SHELL", f.text) for f in findings):
             steps.append("Admin/shell confirmed above - get your shell, then dump SAM/LSASS or hunt for the next credential.")
 
+    if any("/etc/hosts entry" in f.text for f in findings):
+        steps.append("Add the SMB-derived /etc/hosts line above BEFORE web/AD enum - vhosts, Kerberos and LDAP referrals all need the real hostname to resolve.")
     if host_profile["dc_signals"] >= 2:
         steps.append("AD: enumerate users via LDAP/RID, then AS-REP roast (impacket GetNPUsers) and Kerberoast.")
-    if "ftp" in svc_present:
-        steps.append("FTP: log in anonymously, pull every file, check for creds/config/web-root overlap.")
+    ftp_present = "ftp" in svc_present or any(
+        p == 21 or "ftp" in services[p].get("name", "").lower() for p in ports)
+    if any(f.service == "ftp" and "Anonymous FTP login allowed" in f.text for f in findings):
+        steps.append("FTP: anonymous login CONFIRMED - pull every file, check for creds/config/web-root overlap.")
+    elif ftp_present:
+        steps.append("FTP: anonymous login was NOT confirmed - try harvested/known creds, note the software+version from the banner, and searchsploit it.")
     if 445 in ports or 139 in ports:
         steps.append("SMB: list shares with null/guest, mount readable ones, grep for passwords & scripts.")
     if any(is_web(p, services[p].get('name','')) for p in ports):
