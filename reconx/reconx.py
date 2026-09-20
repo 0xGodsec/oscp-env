@@ -958,12 +958,21 @@ FINDING_RULES = [
     # Must match a *confirmed* null session, not just the phrase "null session"
     # appearing in a failure message like "Could not establish null session: ...".
     ("CRITICAL", re.compile(r"Server allows (?:session using|authenticat\w* via) username '',?\s*(?:password|and password) ''", re.I), "smb", "SMB NULL session allowed"),
-    # Must match an actual enabled/true value, not just the field name (e.g.
-    # netexec prints "(SMBv1:None)" / "(signing:True)" even when both are safe).
-    ("HIGH",     re.compile(r"SMBv1:\s*True\b|SMB1 \(enabled\)|SMB 1\.0:\s*true\b|SMB1 only:\s*true\b|signing:\s*False\b|SMB signing required:\s*false\b|Message signing enabled but not required|Message signing disabled", re.I), "smb", "SMB signing disabled / SMBv1 - relay & MS17-010 candidate"),
+    # Signing and SMBv1 are DISTINCT weaknesses - keep them as separate,
+    # accurately-labelled findings. Match only an actual weak value, not just
+    # the field name: netexec prints "(signing:True)"/"(SMBv1:True)" and flips
+    # to False/None when safe, so "signing:True" means signing IS required
+    # (NOT a finding) - the old combined rule matched SMBv1:True but mislabelled
+    # it "signing disabled ... MS17-010 candidate", a false positive on any
+    # modern host that merely still has SMB1 enabled.
+    ("HIGH",     re.compile(r"signing:\s*False\b|SMB signing required:\s*false\b|Message signing enabled but not required|Message signing disabled", re.I), "smb", "SMB signing not required - NTLM relay candidate"),
+    ("MEDIUM",   re.compile(r"SMBv1:\s*True\b|SMB1 \(enabled\)|SMB 1\.0:\s*true\b|SMB1 only:\s*true\b", re.I), "smb", "SMBv1 enabled - legacy protocol; MS17-010 surface (confirm with the ms17-010 module)"),
     ("HIGH",     re.compile(r"(READ|WRITE)(,|/| )?(WRITE)? on \\\\|Mapping: OK.*Listing: OK", re.I), "smb", "Readable/writable SMB share"),
     ("MEDIUM",   re.compile(r"\[\+\] Enumerating users", re.I), "smb", "User enumeration succeeded via RID/LSA"),
-    ("HIGH",     re.compile(r"MS17-010|EternalBlue", re.I), "smb", "MS17-010 (EternalBlue) likely vulnerable"),
+    # Only a scanner-CONFIRMED hit, never the module name/command echo or the
+    # negative "does NOT appear vulnerable" line (which the old /MS17-010/ regex
+    # matched, flagging every host the ms17-010 module merely ran against).
+    ("HIGH",     re.compile(r"appears?\s+vulnerable\s+to\s+MS17-010|smb-vuln-ms17-010[\s\S]{0,200}?State:\s*VULNERABLE", re.I), "smb", "MS17-010 (EternalBlue) - scanner-confirmed vulnerable"),
     ("CRITICAL", re.compile(r"(anonymous|unauthenticated) bind", re.I), "ldap", "LDAP anonymous bind allowed"),
     ("HIGH",     re.compile(r"defaultNamingContext:|rootDomainNamingContext:", re.I), "ldap", "LDAP leaks naming context (domain structure)"),
     ("HIGH",     re.compile(r"(Domain Controller|DC=.*,DC=|ldap.*Kerberos)", re.I), "ad", "Host looks like a Domain Controller"),
