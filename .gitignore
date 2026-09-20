@@ -15,6 +15,11 @@ loot/
 *.log
 users.csv
 
+# stray target/engagement artifacts (captured from boxes, never part of the kit)
+*.uac
+.htaccess
+exam-harness/index.php
+
 # python
 __pycache__/
 *.py[cod]

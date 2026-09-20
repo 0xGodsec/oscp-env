@@ -1,1 +1,0 @@
-﻿<center><pre>Qui e nuce nuculeum esse volt, frangit nucem!</pre></center>
