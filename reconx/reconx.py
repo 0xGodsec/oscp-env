@@ -163,7 +163,7 @@ def refresh_tools():
               "curl", "enum4linux-ng", "enum4linux", "nxc", "netexec", "crackmapexec",
               "smbclient", "rpcclient", "ldapsearch",
               "snmpwalk", "onesixtyone", "showmount", "dig",
-              "redis-cli", "psql", "openssl", "ncat", "nc",
+              "redis-cli", "psql", "mysql", "mariadb", "openssl", "ncat", "nc",
               "searchsploit",
               "whatweb", "feroxbuster", "gobuster", "ffuf", "nikto",
               "impacket-GetUserSPNs", "GetUserSPNs.py",
@@ -975,7 +975,11 @@ FINDING_RULES = [
     ("HIGH",     re.compile(r"appears?\s+vulnerable\s+to\s+MS17-010|smb-vuln-ms17-010[\s\S]{0,200}?State:\s*VULNERABLE", re.I), "smb", "MS17-010 (EternalBlue) - scanner-confirmed vulnerable"),
     ("CRITICAL", re.compile(r"(anonymous|unauthenticated) bind", re.I), "ldap", "LDAP anonymous bind allowed"),
     ("HIGH",     re.compile(r"defaultNamingContext:|rootDomainNamingContext:", re.I), "ldap", "LDAP leaks naming context (domain structure)"),
-    ("HIGH",     re.compile(r"(Domain Controller|DC=.*,DC=|ldap.*Kerberos)", re.I), "ad", "Host looks like a Domain Controller"),
+    # Only netexec's explicit DC flag - the old /Domain Controller/ substring
+    # matched built-in AD group names ("Domain Controllers", "Cloneable Domain
+    # Controllers", ...) present in ANY authenticated LDAP groups dump, flagging
+    # every domain host (not just DCs) as a Domain Controller.
+    ("HIGH",     re.compile(r"\(DC:True\)", re.I), "ad", "Host looks like a Domain Controller"),
     ("MEDIUM",   re.compile(r"Kerberos.*88/tcp open", re.I), "kerberos", "Kerberos exposed - try user enum / AS-REP roasting"),
     # netexec dump/exec/AD-enum output (added for the full nxc coverage)
     ("CRITICAL", re.compile(r"\(Pwn3d!\)", re.I), "creds", "netexec: ADMIN access (Pwn3d!) - remote code execution available"),
@@ -985,13 +989,22 @@ FINDING_RULES = [
     ("HIGH",     re.compile(r"TRUSTED_FOR_DELEGATION|Unconstrained|constrained delegation", re.I), "ad", "Kerberos delegation configured - delegation abuse path"),
     ("HIGH",     re.compile(r"PASSWD_NOTREQD|password[- ]not[- ]required|DONT_REQ_PREAUTH", re.I), "ad", "Account with weak UAC flag (no-preauth / passwd-notreqd)"),
     ("CRITICAL", re.compile(r"(LAPS|ms-mcs-admpwd).{0,40}(password|:)\s*\S{6,}", re.I), "creds", "LAPS local-admin password recovered via netexec"),
-    ("HIGH",     re.compile(r"\bgMSA\b|ReadGMSAPassword|managedPassword", re.I), "ad", "gMSA readable - extract managed password"),
+    # A RECOVERED gMSA (account + NTLM hash) or the BloodHound edge - not the
+    # bare "gMSA" word (matched netexec's "[*] Getting GMSA Passwords" status
+    # line and the "--gmsa" flag) which fired even when nothing was read.
+    ("HIGH",     re.compile(r"ReadGMSAPassword|Account:\s*\S+\$\s+NTLM:\s*[0-9a-fA-F]{32}", re.I), "ad", "gMSA readable - managed password recovered"),
     ("CRITICAL", re.compile(r"cpassword|gpp_password.*found|Found credentials in", re.I), "creds", "GPP cpassword / autologin credential found in SYSVOL"),
-    ("HIGH",     re.compile(r"ESC\d+|Vulnerable Certificate Templates|adcs.*Enrollment", re.I), "ad", "AD CS enrollment service / vulnerable template (ESC) - certipy"),
+    # Only a real ESC hit / vulnerable-template verdict - the old "adcs.*Enrollment"
+    # alternation matched netexec's "[*] Starting LDAP search ... pKIEnrollmentService"
+    # status line, flagging a vulnerable template before anything was found.
+    ("HIGH",     re.compile(r"\bESC\d{1,2}\b|Vulnerable Certificate Templates?", re.I), "ad", "AD CS vulnerable template (ESC) - certipy"),
     # requires an explicit credential-assignment keyword + ':'/'=' + a value,
     # not just two words separated by punctuation (that matched web paths
-    # like "admin/config" and any "word: word" text as false positives).
-    ("HIGH",     re.compile(r"(?:^|[^a-zA-Z0-9])(password|passwd|pwd|secret|api[_-]?key|access[_-]?token)['\"]?\s*[:=]\s*['\"]?\S{3,}", re.I), "creds", "Possible default/leaked credential in output"),
+    # like "admin/config" and any "word: word" text as false positives). The
+    # (?<!empty-)/(?<!empty_) guards stop it matching tool/NSE script names like
+    # "mysql-empty-password: Host ..." (keyword is part of the script name, not
+    # a leaked credential).
+    ("HIGH",     re.compile(r"(?:^|[^a-zA-Z0-9])(?<!empty-)(?<!empty_)(password|passwd|pwd|secret|api[_-]?key|access[_-]?token)['\"]?\s*[:=]\s*['\"]?\S{3,}", re.I), "creds", "Possible default/leaked credential in output"),
     ("MEDIUM",   re.compile(r"robots\.txt", re.I), "http", "robots.txt present - inspect disallowed paths"),
     # (?<!\.) blocks matches touching a dot, so a "firstname.jenkins" or
     # "firstname.gitlab"-style domain username (seen in SMB/LDAP user dumps)
@@ -1011,6 +1024,10 @@ FINDING_RULES = [
     ("CRITICAL", re.compile(r"List of databases|\btemplate1\b|\btemplate0\b", re.I), "postgres", "PostgreSQL unauthenticated access - database list dumped"),
     ("HIGH",     re.compile(r"pgsql|PostgreSQL \d|psql \(", re.I), "postgres", "PostgreSQL reachable - test postgres/blank and weak creds"),
     ("MEDIUM",   re.compile(r"fe_sendauth: no password supplied|no pg_hba\.conf entry", re.I), "postgres", "PostgreSQL requires auth (note pg_hba details in output)"),
+    # MySQL - one precise rule for the exact nmap NSE empty-password phrase.
+    # Reachability / host-restriction / default-cred findings are emitted by
+    # enum_mysql() itself, so no broad "reachable" regex here (avoids FPs).
+    ("CRITICAL", re.compile(r"account has empty password", re.I), "mysql", "MySQL account with EMPTY password (nmap mysql-empty-password)"),
     # POP3 / IMAP
     ("HIGH",     re.compile(r"USER command used|\+OK.*USER|SASL.*(LOGIN|PLAIN)", re.I), "pop3", "POP3 supports USER/PASS or PLAIN auth - test cred reuse"),
     ("HIGH",     re.compile(r"CAPABILITY.*(LOGIN|AUTH=PLAIN|AUTH=LOGIN)|\* OK.*IMAP", re.I), "imap", "IMAP allows LOGIN/PLAIN auth - test cred reuse"),
@@ -1725,6 +1742,58 @@ async def enum_postgres(host, port, runner, args, findings):
     good("postgres enum done")
 
 
+async def enum_mysql(host, port, runner, args, findings):
+    """MySQL / MariaDB (3306). netexec has no reliable 'mysql' protocol (many
+    builds omit it - it errors 'invalid choice'), so enumeration is via nmap NSE
+    + the mysql/mariadb client: version/info, an empty-password check, and a
+    small default-cred probe. Surfaces the common ERROR 1130 host-restriction so
+    you know to retry from an allowed host once you have a foothold."""
+    tag = f"{host}/mysql"
+    result = None   # 'access' (got in) | 'restricted' (1130) | 'up' (reachable)
+
+    # 1) nmap NSE: server info + empty-password check.
+    if TOOLS.get("nmap"):
+        rc, out = await runner.run(
+            f"nmap -Pn -p {port} --script mysql-info,mysql-empty-password "
+            f"--script-timeout 30s -oN /dev/stdout {host}",
+            f"{tag}/mysql_nse.txt", "nmap-mysql", timeout=70)
+        scan_findings(out, "mysql", port, findings)
+        if out and re.search(r"MySQL|MariaDB|mysql-info", out, re.I):
+            result = "up"
+
+    # 2) direct client probe: small default-cred sweep (like enum_postgres, these
+    # are DB-local defaults, not the domain credential).
+    myclient = _first_tool("mysql", "mariadb")
+    if myclient:
+        for user, pw in (("root", ""), ("root", "root"), ("root", "password")):
+            cmd = (f"{myclient} -h {host} -P {port} -u {shlex.quote(user)} "
+                   f"--password={shlex.quote(pw)} --connect-timeout=8 -e 'show databases;'")
+            rc, out = await runner.run(cmd, f"{tag}/client_{user}_{pw or 'blank'}.txt",
+                                       "mysql-client", timeout=30)
+            low = (out or "").lower()
+            if "information_schema" in low:
+                findings.append(Finding("CRITICAL", "mysql", port,
+                    f"MySQL default creds work (root:{pw or '<blank>'}) - dumped database list"))
+                result = "access"
+                break
+            if "not allowed to connect" in low or "error 1130" in low:
+                findings.append(Finding("MEDIUM", "mysql", port,
+                    "MySQL/MariaDB reachable but host-restricted (ERROR 1130) - "
+                    "retry from an allowed host after a foothold"))
+                result = "restricted"
+                break
+            if "access denied" in low:
+                result = "up"   # service up, default creds rejected
+
+    if result == "up":
+        findings.append(Finding("MEDIUM", "mysql", port,
+            "MySQL/MariaDB reachable - test weak/default creds; reuse app/config creds found elsewhere"))
+    elif result is None and not (TOOLS.get("nmap") or myclient):
+        findings.append(Finding("MEDIUM", "mysql", port,
+            "MySQL open - install nmap or a mysql/mariadb client to enumerate"))
+    good("mysql enum done")
+
+
 async def _mail_probe(host, port, tls, runner, tag, label, payload="CAPA\\r\\nQUIT\\r\\n"):
     """Send a raw payload and grab the response. Uses openssl for TLS ports,
     ncat/nc otherwise. Default payload is POP3/generic CAPA+QUIT; callers on
@@ -2003,7 +2072,7 @@ _HOST_TYPE_ENUM_PRIORITY = {
            "ssh": PRIO_ENUM_LOW},
     "windows": {"smb": PRIO_ENUM_HIGH, "winrm": PRIO_ENUM_HIGH, "rdp": PRIO_ENUM_HIGH,
                 "web": PRIO_ENUM_LOW},
-    "linux": {"ssh": PRIO_ENUM_HIGH, "web": PRIO_ENUM_LOW, "mssql": PRIO_ENUM_LOW},
+    "linux": {"ssh": PRIO_ENUM_HIGH, "web": PRIO_ENUM_LOW, "mssql": PRIO_ENUM_LOW, "mysql": PRIO_ENUM_LOW},
     "web": {"web": PRIO_ENUM_HIGH},
 }
 
@@ -2109,6 +2178,9 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port == 1433 or "ms-sql" in name or "mssql" in name:
             queue.add_job(Job(f"{host}:mssql:{port}", prio("mssql"), background=False,
                 coro_factory=functools.partial(enum_mssql, host, port, runner, args, findings)))
+        elif port == 3306 or "mysql" in name or "mariadb" in name:
+            queue.add_job(Job(f"{host}:mysql:{port}", prio("mysql"), background=False,
+                coro_factory=functools.partial(enum_mysql, host, port, runner, args, findings)))
         elif port in (6379,) or "redis" in name:
             queue.add_job(Job(f"{host}:redis:{port}", prio("redis"), background=False,
                 coro_factory=functools.partial(enum_redis, host, port, runner, args, findings)))
