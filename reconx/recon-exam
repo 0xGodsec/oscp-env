@@ -193,6 +193,14 @@ _DN_RX = re.compile(r"(DC=[A-Za-z0-9_-]+(?:,\s*DC=[A-Za-z0-9_-]+)+)", re.I)
 _DNS_DOMAIN_RX = re.compile(r"(?:DNS[_ ]Domain[_ ]Name|Domain[_ ]?Name|dns[_-]?domain)\s*[:=]\s*([A-Za-z0-9._-]+\.[A-Za-z]{2,})", re.I)
 _FQDN_RX = re.compile(r"(?:DNS[_ ]Computer[_ ]Name|DNS[_ ]Host[_ ]Name|Full[_ ]?name|Computer[_ ]DNS[_ ]?Name)\s*[:=]\s*([A-Za-z0-9._-]+\.[A-Za-z0-9._-]+)", re.I)
 _NETBIOS_RX = re.compile(r"(?:NetBIOS[_ ]Computer[_ ]Name|NetBIOS[_ ]?computer[_ ]?name|Target[_ ]Name|Computer[_ ]?Name)\s*[:=]\s*([A-Za-z0-9_-]+)", re.I)
+# netexec's own banner: "... (name:ERA) (domain:secura.yzx) ...". On a non-DC
+# with no LDAP and no labelled enum4linux DNS fields, this is often the ONLY
+# place the domain appears - without it, a domain-joined host gets domain=None
+# and is silently skipped in the authenticated Pass 2. Require a dotted domain
+# so a standalone/workgroup banner (domain==COMPUTERNAME, or WORKGROUP) doesn't
+# get mistaken for an AD domain.
+_NXC_DOMAIN_RX = re.compile(r"\(domain:\s*([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.[A-Za-z]{2,})\)", re.I)
+_NXC_NAME_RX = re.compile(r"\(name:\s*([A-Za-z0-9_-]+)\)", re.I)
 
 
 def _dn_to_domain(dn):
@@ -222,6 +230,10 @@ def extract_identity(ip_out_dir):
                     m = _DN_RX.search(text)
                     if m:
                         domain = _dn_to_domain(m.group(1))
+                    else:
+                        m = _NXC_DOMAIN_RX.search(text)   # netexec banner fallback
+                        if m:
+                            domain = m.group(1).lower()
             if not fqdn:
                 m = _FQDN_RX.search(text)
                 if m and "." in m.group(1):
@@ -230,6 +242,10 @@ def extract_identity(ip_out_dir):
                 m = _NETBIOS_RX.search(text)
                 if m:
                     short = m.group(1).lower()
+                else:
+                    m = _NXC_NAME_RX.search(text)         # netexec banner fallback
+                    if m:
+                        short = m.group(1).lower()
     if fqdn and not domain and fqdn.count(".") >= 1:
         domain = fqdn.split(".", 1)[1]
     if fqdn and not short:
