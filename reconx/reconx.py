@@ -2000,15 +2000,47 @@ def _service_priority(module_key, host_type):
 #  started yet); a job the guess pass missed (nmap corrects a wrong guess)
 #  still fires from the confirm pass, just later, without blocking anything.
 # --------------------------------------------------------------------------- #
+# Ports the --ad pass cares about: SMB, Kerberos, kpasswd, RPC, LDAP (incl.
+# Global Catalog), and WinRM - the DC-facing surface. Used both to filter the
+# module dispatch below and as the target list for the quick DC-port probe when
+# no cached ports exist yet (see job_discover's --ad branch).
+_AD_PORTS = {53, 88, 135, 139, 389, 445, 464, 636, 3268, 3269, 5985, 5986}
+# Service-name substrings that mark an AD-relevant port even on a non-standard
+# number, so --ad's port-number filter doesn't miss e.g. LDAP on an odd port.
+_AD_NAME_HINTS = ("microsoft-ds", "netbios", "ldap", "kerberos", "msrpc",
+                  "epmap", "winrm", "wsman", "domain", "dns")
+
+
+def _is_ad_port(port, name):
+    return port in _AD_PORTS or any(h in name for h in _AD_NAME_HINTS)
+
+
+async def _ad_port_probe(host, runner, args):
+    """Quick connect-sweep of just the DC-facing ports, used by --ad when there's
+    no cached port list to reuse. Bounded to _AD_PORTS so it's seconds, not a
+    full range scan - the whole point of --ad is a fast re-enum after creds."""
+    if runner.dry_run:
+        return sorted(_AD_PORTS)
+    return await async_port_scan(host, sorted(_AD_PORTS),
+                                 concurrency=min(args.concurrency, len(_AD_PORTS)),
+                                 timeout=args.host_timeout)
+
+
 def register_service_jobs(queue, host, services, runner, args, findings, host_profile):
     counted = host_profile.setdefault("_counted_ports", set())
     host_type = host_profile["host_type"] = classify_host_type(list(services), services)
+    ad_only = getattr(args, "ad", False)
 
     def prio(module_key):
         return _service_priority(module_key, host_type)
 
     for port, meta in sorted(services.items()):
         name = meta.get("name", guess_service(port))
+
+        # --ad: only enumerate the DC-facing surface; skip FTP/SSH/HTTP/DB/etc.
+        # entirely (this also skips the web block and profile hints below).
+        if ad_only and not _is_ad_port(port, name):
+            continue
 
         if port in (139, 445) or "microsoft-ds" in name or "netbios" in name:
             queue.add_job(Job(f"{host}:smb", prio("smb"), background=False,
@@ -2290,7 +2322,49 @@ def _sync_exam(host, host_state, findings, host_profile, runner, args):
 #  discover_ports()/service_scan()/udp_scan()/enum_*() themselves are
 #  untouched pure workers.
 # --------------------------------------------------------------------------- #
+async def _job_discover_ad(host, runner, args, queue, findings,
+                           host_profile, host_state, state_store):
+    """--ad orchestrator: reuse cached ports/services from a prior run (or do a
+    quick DC-port probe when there's no cache), then register ONLY the AD suite.
+    Deliberately queues no service_scan/udp_scan/vuln_scan job - the whole point
+    is a fast, creds-in-hand re-enum of the AD surface, not another full scan."""
+    cached_ports = state_store.data.get("ports") if state_store else None
+    cached_services = state_store.data.get("services") if state_store else None
+    if cached_ports and not runner.dry_run:
+        ports = cached_ports
+        info(f"--ad: reusing {len(ports)} cached port(s) for {host} "
+             f"(from {state_store.path})")
+    else:
+        if not runner.dry_run:
+            info(f"--ad: no cached ports for {host} - quick DC-port probe "
+                 f"({len(_AD_PORTS)} ports)")
+        ports = await _ad_port_probe(host, runner, args)
+        if state_store:
+            await state_store.save_ports_services(ports=ports)
+
+    # Prefer cached nmap service names; otherwise guess from the port number
+    # (reliable for the fixed AD ports the enum modules key off).
+    if cached_services and not runner.dry_run:
+        services = {p: cached_services.get(p, {"name": guess_service(p), "version": ""})
+                    for p in ports}
+    else:
+        services = {p: {"name": guess_service(p), "version": ""} for p in ports}
+    host_state["ports"] = ports
+    host_state["services"] = services
+
+    if not ports:
+        warn(f"{host}: no AD-relevant ports open (not a DC? try a full scan first)")
+        return ports
+    good(f"{host}: {len(ports)} AD port(s): {', '.join(map(str, ports))}")
+
+    register_service_jobs(queue, host, services, runner, args, findings, host_profile)
+    return ports
+
+
 async def job_discover(host, runner, args, queue, findings, host_profile, host_state, state_store):
+    if getattr(args, "ad", False):
+        return await _job_discover_ad(host, runner, args, queue, findings,
+                                      host_profile, host_state, state_store)
     if (args.resume and state_store
             and state_store.job_status(f"{host}:discover") == "done"
             and state_store.data.get("ports")):
@@ -2386,7 +2460,9 @@ async def scan_host(host, runner, args):
     good(f"=== target: {host} ===")
 
     state_store = None if runner.dry_run else StateStore(runner.outdir, host)
-    if args.resume and state_store:
+    # --ad reuses a prior run's ports/services, so it needs the state loaded too,
+    # not only --resume.
+    if (args.resume or getattr(args, "ad", False)) and state_store:
         state_store.load()
     if state_store:
         state_store.data["mode"] = args.mode
@@ -2589,6 +2665,13 @@ AUTHENTICATED MODE
     --spray                 test the ONE supplied credential across every
                             host in a CIDR via SMB/WinRM, then stop
                             (doesn't full-scan the whole range)
+    --ad                    AD-focused re-enum: reuse the ports/services from
+                            a prior run's state file (or a quick DC-port probe
+                            if there's no cache), skip general discovery and
+                            every non-AD module, and run only the AD suite
+                            (SMB/LDAP/Kerberos/DNS/WinRM) with the -u/-p/-H/-d
+                            credential. The fast "got a cred, re-hit the DC"
+                            loop - no second full port scan.
     --bloodhound            once authenticated to LDAP, also run a full
                             bloodhound-python -c All collection in the
                             background (needs bloodhound-python installed)
@@ -2710,6 +2793,10 @@ def build_argparser():
     cg.add_argument("--local-auth", action="store_true", help="treat creds as LOCAL account, not domain")
     cg.add_argument("--spray", action="store_true",
                     help="spray the ONE credential across all hosts (CIDR) via SMB/WinRM")
+    cg.add_argument("--ad", action="store_true",
+                    help="AD-focused re-enum: reuse cached ports (or a quick DC-port "
+                         "probe), skip general discovery + non-AD modules, and run only "
+                         "the AD suite (SMB/LDAP/Kerberos/DNS/WinRM) with the -u/-p/-H/-d creds")
     p.add_argument("--mode", choices=("quick", "full", "deep"), default=None,
                    help="scan profile: quick (fast, no UDP/scripts), full (default), "
                         "deep (heavier vuln-scan scripts auto-on)")
@@ -2834,6 +2921,14 @@ async def amain(args):
     elif args.spray:
         bad("--spray needs a credential (-u with -p or -H). Ignoring.")
         args.spray = False
+
+    if getattr(args, "ad", False):
+        if have_creds(args):
+            good(f"--ad: AD-focused re-enum with {C.M}{cred_label(args)}{C.END} "
+                 f"(reusing cached ports; non-AD modules skipped)")
+        else:
+            warn("--ad without credentials - running UNAUTHENTICATED AD enum "
+                 "(null/guest only). Add -u/-p/-H (+ -d) for the full AD suite.")
 
     hosts = expand_targets(args.target)
     if len(hosts) > 1 and args.ping_sweep and not args.dry_run:

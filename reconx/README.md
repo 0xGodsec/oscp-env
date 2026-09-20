@@ -93,6 +93,7 @@ reconx dc01.corp.htb -u alex.turner -p 'Passw0rd!' -d corp.htb   # domain creds
 reconx 10.10.10.5 -u admin -H <LM:NT> --local-auth               # pass-the-hash
 reconx 10.10.10.0/24 -u svc -p 'S3cret!' --spray                 # spray one cred
 reconx dc01.corp.htb -u alex.turner -p 'Passw0rd!' -d corp.htb --bloodhound  # + full BloodHound collection
+reconx dc01.corp.htb -u alex.turner -p 'Passw0rd!' -d corp.htb --ad          # fast AD re-enum, reuse cached ports
 ```
 
 Credential flags: `-u/--user`, `-p/--pass`, `-H/--hash` (NTLM PtH),
@@ -101,6 +102,14 @@ Credential flags: `-u/--user`, `-p/--pass`, `-H/--hash` (NTLM PtH),
 (once authenticated to LDAP, run a full `bloodhound-python -c All` collection
 in the background — needs `bloodhound-python`/`bloodhound-ce-python`
 installed; without the flag reconx just prints the manual command to run).
+
+`--ad` is the "got a cred, re-hit the DC" shortcut: it **reuses the ports and
+services** from the target's prior-run state file (falling back to a quick
+DC-port probe if there's no cache), skips general discovery and every non-AD
+module, and runs **only** the AD suite (SMB/LDAP/Kerberos/DNS/WinRM) with the
+`-u/-p/-H/-d` credential — no second full port scan. Run it after an initial
+scan surfaces a credential; without creds it degrades to unauthenticated
+null/guest AD enum and warns.
 
 > Credential reuse is the fastest path from foothold to root. reconx sprays a
 > **single** credential (never a list) and stops on `STATUS_ACCOUNT_LOCKED_OUT`,
