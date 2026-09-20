@@ -165,7 +165,7 @@ def refresh_tools():
               "snmpwalk", "onesixtyone", "showmount", "dig",
               "redis-cli", "psql", "openssl", "ncat", "nc",
               "searchsploit",
-              "whatweb", "feroxbuster", "gobuster", "ffuf",
+              "whatweb", "feroxbuster", "gobuster", "ffuf", "nikto",
               "impacket-GetUserSPNs", "GetUserSPNs.py",
               "impacket-GetNPUsers", "GetNPUsers.py",
               "bloodhound-python", "bloodhound-ce-python",
@@ -950,8 +950,10 @@ def cred_label(args):
 # --------------------------------------------------------------------------- #
 FINDING_RULES = [
     # (severity, compiled_regex, service_hint, message_template)
-    ("CRITICAL", re.compile(r"Anonymous( FTP)? login (allowed|successful|ok)", re.I), "ftp", "Anonymous FTP login allowed"),
-    ("CRITICAL", re.compile(r"\|_?ftp-anon:.*Anonymous", re.I), "ftp", "nmap confirms anonymous FTP"),
+    # NOTE: anonymous-FTP is NOT flagged by a loose regex here - a banner like
+    # "220 Anonymous access allowed, send email as password" or nxc's own
+    # failure lines would false-positive. enum_ftp() confirms it explicitly
+    # (curl exit code / nmap "login allowed" / netexec "Anonymous Login!").
     ("HIGH",     re.compile(r"vsftpd 2\.3\.4", re.I), "ftp", "vsftpd 2.3.4 - backdoor (CVE-2011-2523)"),
     # Must match a *confirmed* null session, not just the phrase "null session"
     # appearing in a failure message like "Could not establish null session: ...".
@@ -1082,9 +1084,93 @@ async def _nmap_nse(host, port, scripts, proto, runner, tag, findings, timeout=N
     return out
 
 
+_SMB_BANNER_NAME_RX = re.compile(r"\(name:([^)]*)\)")
+_SMB_BANNER_DOMAIN_RX = re.compile(r"\(domain:([^)]*)\)")
+_SMB_BANNER_ISDC_RX = re.compile(r"\(DC:True\)")
+
+
+def _hosts_line_from_banner(host, out):
+    """Build netexec's own hosts-line format from an SMB banner line, e.g.
+    'SMB ... (name:DC) (domain:northstone.local) ... (DC:True)' ->
+    '<ip>  DC.northstone.local northstone.local DC'. Returns '' if the banner
+    lacks a usable name/domain. Mirrors netexec: the bare domain only appears
+    (as the middle field) for a Domain Controller."""
+    nm = _SMB_BANNER_NAME_RX.search(out or "")
+    dm = _SMB_BANNER_DOMAIN_RX.search(out or "")
+    if not (nm and dm and nm.group(1) and dm.group(1)):
+        return ""
+    name, domain = nm.group(1).strip(), dm.group(1).strip()
+    dc_part = f" {domain}" if _SMB_BANNER_ISDC_RX.search(out or "") else ""
+    return f"{host}     {name}.{domain}{dc_part} {name}"
+
+
+async def _smb_hosts_file(nxc, host, runner, args, findings):
+    """Emit an ACCURATE /etc/hosts line straight from the SMB banner via
+    netexec's --generate-hosts-file, instead of guessing the domain from a
+    reverse-PTR label (often wrong). netexec writes the line during host-info
+    enumeration, so it works over a null/guest session:
+        IP    HOSTNAME.domain [domain-if-DC] HOSTNAME
+    Add the whole line to /etc/hosts in one shot - no need to hand-assemble it.
+
+    Robustness: netexec's first invocation can transiently return nothing under
+    reconx's concurrency (cold DB init), so we retry once; and if it printed the
+    banner but wrote no file (e.g. the guest login errored STATUS_ACCOUNT_DISABLED
+    before the file write on some paths), we assemble the identical line from the
+    banner ourselves."""
+    tag = f"{host}/smb"
+    hosts_path = os.path.join(runner.outdir, host, "smb", "hosts")
+    auth = nxc_auth(args) if have_creds(args) else "-u guest -p ''"
+
+    def _read_line():
+        try:
+            with open(hosts_path, errors="replace") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    async def _attempt():
+        # netexec appends (a+); drop a stale file first so we read back exactly
+        # this host's line and don't accumulate duplicates across retries/resume.
+        if not runner.dry_run:
+            try:
+                os.makedirs(os.path.dirname(hosts_path), exist_ok=True)
+                if os.path.exists(hosts_path):
+                    os.remove(hosts_path)
+            except OSError:
+                pass
+        _, out = await runner.run(
+            f"{nxc} smb {host} {auth} --generate-hosts-file {shlex.quote(hosts_path)}",
+            f"{tag}/nxc_hosts.txt", f"{nxc} smb --generate-hosts-file")
+        return out or ""
+
+    out = await _attempt()
+    if runner.dry_run:
+        return
+    line = _read_line()
+    # nothing at all (not even a banner) -> transient; one serial retry.
+    if not line and not _SMB_BANNER_NAME_RX.search(out):
+        out = await _attempt()
+        line = _read_line()
+    # banner seen but no file written -> build the line ourselves.
+    if not line:
+        line = _hosts_line_from_banner(host, out)
+        if line:
+            try:
+                with open(hosts_path, "w") as f:
+                    f.write(line + "\n")
+            except OSError:
+                pass
+    if line:
+        findings.append(Finding("INFO", "smb", 445,
+            f"/etc/hosts entry (SMB-derived, accurate): {line}   "
+            f"(sudo sh -c 'echo \"{line}\" >> /etc/hosts'; saved to {hosts_path})"))
+
+
 async def enum_smb(host, runner, args, findings):
     tag = f"{host}/smb"
     nxc = nxc_bin()
+    if nxc:
+        await _smb_hosts_file(nxc, host, runner, args, findings)
     if have_creds(args):
         # authenticated: check access, admin (Pwn3d!), shares, users, and loot.
         if nxc:
@@ -1361,24 +1447,47 @@ async def enum_ldap(host, port, runner, args, findings, queue):
 
 
 async def enum_ftp(host, port, runner, args, findings):
+    """Anonymous login is only flagged on POSITIVE proof, from any of three
+    independent sources, so a chatty banner ("Anonymous access allowed, send
+    email as password") or a tool's failure message can't false-positive it:
+      - nmap ftp-anon prints "Anonymous FTP login allowed",
+      - curl exits 0 (login AND the LIST both succeeded), or
+      - netexec prints its "- Anonymous Login!" success line."""
     tag = f"{host}/ftp"
+    anon_ok = False
+    evidence = None
     if TOOLS.get("nmap"):
-        await _nmap_nse(host, port, "ftp-anon,ftp-syst", "ftp", runner, tag, findings)
+        out = await _nmap_nse(host, port, "ftp-anon,ftp-syst", "ftp", runner, tag, findings)
+        if out and re.search(r"ftp-anon:.*login allowed", out, re.I):
+            anon_ok, evidence = True, "nmap ftp-anon"
     if TOOLS.get("curl"):
-        rc, out = await runner.run(f"curl -s --max-time 15 ftp://anonymous:anonymous@{host}:{port}/",
+        # -sS keeps the failure reason in the saved file; the finding is gated
+        # on curl's exit code, which is 0 ONLY when the anonymous login and the
+        # directory LIST both succeed (an empty listing still exits 0 = allowed).
+        rc, out = await runner.run(f"curl -sS --max-time 15 ftp://anonymous:anonymous@{host}:{port}/",
                                    f"{tag}/anon_list.txt", "ftp-anon-curl")
-        if out and out.strip():
-            findings.append(Finding("CRITICAL", "ftp", port, "Anonymous FTP login allowed (directory listed)"))
+        if rc == 0:
+            anon_ok = True
+            evidence = evidence or "curl directory listing"
     nxc = nxc_bin()
     if nxc:
-        # nxc confirms + lists anonymous FTP, and lists the tree with supplied
-        # creds - a second opinion alongside nmap/curl.
+        # nxc lists the tree with supplied creds, and gives a second opinion on
+        # anonymous access alongside nmap/curl.
         if have_creds(args):
             await _nxc_enum(nxc, "ftp", host, runner, findings, port, ("--ls",),
                             tag, auth=nxc_auth(args), prefix="auth_nxc")
         rc, out = await runner.run(f"{nxc} ftp {host} -u anonymous -p '' --ls",
                                    f"{tag}/nxc_anon.txt", f"{nxc} ftp anon")
-        scan_findings(out, "ftp", port, findings)
+        # Only netexec's explicit success line counts - not a banner that merely
+        # contains the word "anonymous", and not nxc's "(Response: ...)" failures.
+        if out and re.search(r"-\s*Anonymous Login!", out, re.I):
+            anon_ok = True
+            evidence = evidence or "netexec"
+        scan_findings(out, "ftp", port, findings)   # still catches vsftpd 2.3.4 etc.
+    if anon_ok:
+        findings.append(Finding("CRITICAL", "ftp", port,
+            f"Anonymous FTP login allowed ({evidence}) - pull every file, "
+            f"check for creds/config/web-root overlap"))
     good("ftp enum done")
 
 
@@ -1812,15 +1921,18 @@ def _web_paths_to_findings(text, host, port, findings, limit=12):
 
 
 async def enum_http(host, port, runner, args, findings):
-    """whatweb fingerprint + root grab + a bounded directory brute
-    (feroxbuster, else gobuster). Backgrounded: the summary prints first, web
-    results refresh notes when done. Skip with --no-web."""
+    """Default: a fast whatweb fingerprint + root grab only - the slow directory
+    brute is deliberately NOT part of an initial scan (it dominated the runtime).
+    Under --web the deep pass adds a bounded directory brute (feroxbuster, else
+    gobuster) + nikto. Skip everything with --no-web."""
     if getattr(args, "no_web", False):
         return
+    deep = getattr(args, "web", False)
     scheme = _web_scheme(port, "")
     tag = f"{host}/web_{port}"
     url = f"{scheme}://{host}:{port}"
 
+    # Fingerprint - always cheap, runs in both the initial scan and --web.
     if TOOLS.get("whatweb"):
         rc, out = await runner.run(
             f"whatweb -a 3 --no-errors --color=never {url}",
@@ -1834,6 +1946,15 @@ async def enum_http(host, port, runner, args, findings):
             f"curl -sSik --max-time 15 {url}/", f"{tag}/curl_root.txt", "curl-root", timeout=25)
         scan_findings(out, "http", port, findings)
 
+    if not deep:
+        # Initial scan stays fast: fingerprint only. Point the user at --web for
+        # the heavy content-discovery pass rather than paying for it every scan.
+        findings.append(Finding("INFO", "http", port,
+            f"Web on {url} - fingerprint only; run 'reconx {host} --web' for dir-brute + nikto"))
+        good(f"web fingerprint ({url}) done")
+        return
+
+    # --web deep pass: directory brute (feroxbuster > gobuster) + nikto.
     wl = _web_wordlist()
     cap = min(getattr(args, "web_timeout", 180) or 180, getattr(args, "enum_timeout", 600))
     if wl and TOOLS.get("feroxbuster"):
@@ -1848,6 +1969,11 @@ async def enum_http(host, port, runner, args, findings):
     else:
         findings.append(Finding("INFO", "http", port,
             f"Web on {url} - no feroxbuster/gobuster+wordlist found; run your own dir brute"))
+    if TOOLS.get("nikto"):
+        rc, out = await runner.run(
+            f"nikto -h {url} -maxtime {cap}s -ask no -nointeractive",
+            f"{tag}/nikto.txt", "nikto", timeout=cap + 30)
+        scan_findings(out, "http", port, findings)
     good(f"web enum ({url}) done")
 
 
@@ -1891,9 +2017,48 @@ def _service_priority(module_key, host_type):
 #  started yet); a job the guess pass missed (nmap corrects a wrong guess)
 #  still fires from the confirm pass, just later, without blocking anything.
 # --------------------------------------------------------------------------- #
+# Ports the --ad pass enumerates: SMB, Kerberos, kpasswd, RPC, LDAP (incl.
+# Global Catalog), and WinRM - the DC-facing surface. Deliberately distinct
+# from the narrower _AD_PORTS discriminator set (see top of file) that
+# classify_host_type uses to *decide* a host is a DC: this one drives the --ad
+# module filter and the quick DC-port probe when no cached ports exist yet.
+_AD_SURFACE_PORTS = {53, 88, 135, 139, 389, 445, 464, 636, 3268, 3269, 5985, 5986}
+# Service-name substrings that mark an AD-relevant port even on a non-standard
+# number, so --ad's port-number filter doesn't miss e.g. LDAP on an odd port.
+_AD_NAME_HINTS = ("microsoft-ds", "netbios", "ldap", "kerberos", "msrpc",
+                  "epmap", "winrm", "wsman", "domain", "dns")
+
+
+def _is_ad_port(port, name):
+    return port in _AD_SURFACE_PORTS or any(h in name for h in _AD_NAME_HINTS)
+
+
+async def _ad_port_probe(host, runner, args):
+    """Quick connect-sweep of just the DC-facing ports, used by --ad when there's
+    no cached port list to reuse. Bounded to _AD_SURFACE_PORTS so it's seconds,
+    not a full range scan - the whole point of --ad is a fast re-enum after creds."""
+    if runner.dry_run:
+        return sorted(_AD_SURFACE_PORTS)
+    return await async_port_scan(host, sorted(_AD_SURFACE_PORTS),
+                                 concurrency=min(args.concurrency, len(_AD_SURFACE_PORTS)),
+                                 timeout=args.host_timeout)
+
+
+async def _web_port_probe(host, runner, args):
+    """Quick connect-sweep of just the common web ports (WEB_PORTS), used by
+    --web when there's no cached port list to reuse. Bounded so it's seconds."""
+    if runner.dry_run:
+        return sorted(WEB_PORTS)
+    return await async_port_scan(host, sorted(WEB_PORTS),
+                                 concurrency=min(args.concurrency, len(WEB_PORTS)),
+                                 timeout=args.host_timeout)
+
+
 def register_service_jobs(queue, host, services, runner, args, findings, host_profile):
     counted = host_profile.setdefault("_counted_ports", set())
     host_type = host_profile["host_type"] = classify_host_type(list(services), services)
+    ad_only = getattr(args, "ad", False)
+    web_only = getattr(args, "web", False)
 
     def prio(module_key):
         return _service_priority(module_key, host_type)
@@ -1901,7 +2066,17 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
     for port, meta in sorted(services.items()):
         name = meta.get("name", guess_service(port))
 
-        if port in (139, 445) or "microsoft-ds" in name or "netbios" in name:
+        # --ad: only enumerate the DC-facing surface; skip FTP/SSH/HTTP/DB/etc.
+        # entirely (this also skips the web block and profile hints below).
+        if ad_only and not _is_ad_port(port, name):
+            continue
+        # --web: only enumerate web ports; skip every non-web module + profile hints.
+        if web_only and not is_web(port, name):
+            continue
+
+        if web_only:
+            pass  # skip the service dispatch below; fall through to the web block
+        elif port in (139, 445) or "microsoft-ds" in name or "netbios" in name:
             queue.add_job(Job(f"{host}:smb", prio("smb"), background=False,
                 coro_factory=functools.partial(enum_smb, host, runner, args, findings)))
         elif port in (389, 636, 3268, 3269) or "ldap" in name:
@@ -1951,12 +2126,17 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
                 coro_factory=functools.partial(enum_wmi, host, port, runner, args, findings)))
 
         if is_web(port, name) and not getattr(args, "no_web", False):
-            queue.add_job(Job(f"{host}:web:{port}", PRIO_BACKGROUND, background=True,
+            # --web: web IS the point, so run it as a core job (the summary waits
+            # on it) at high priority. Normal scan keeps it backgrounded so the
+            # summary prints first and web results refresh notes when done.
+            queue.add_job(Job(f"{host}:web:{port}",
+                PRIO_ENUM_HIGH if web_only else PRIO_BACKGROUND,
+                background=not web_only,
                 coro_factory=functools.partial(enum_http, host, port, runner, args, findings)))
 
         # profile hints - guarded per-port so the guess pass + confirm pass
         # (both of which see this same port) never double-count.
-        if port not in counted:
+        if not web_only and port not in counted:
             if port == 88 or "kerberos" in name:
                 host_profile["dc_signals"] += 1
                 findings.append(Finding("HIGH", "ad", 88, "Kerberos (88) open - strong Domain Controller signal"))
@@ -2033,14 +2213,23 @@ def suggest_next(services, findings, host_profile, args=None):
         if any(re.search(r"\(Pwn3d!\)|login works|SHELL", f.text) for f in findings):
             steps.append("Admin/shell confirmed above - get your shell, then dump SAM/LSASS or hunt for the next credential.")
 
+    if any("/etc/hosts entry" in f.text for f in findings):
+        steps.append("Add the SMB-derived /etc/hosts line above BEFORE web/AD enum - vhosts, Kerberos and LDAP referrals all need the real hostname to resolve.")
     if host_profile["dc_signals"] >= 2:
         steps.append("AD: enumerate users via LDAP/RID, then AS-REP roast (impacket GetNPUsers) and Kerberoast.")
-    if "ftp" in svc_present:
-        steps.append("FTP: log in anonymously, pull every file, check for creds/config/web-root overlap.")
+    ftp_present = "ftp" in svc_present or any(
+        p == 21 or "ftp" in services[p].get("name", "").lower() for p in ports)
+    if any(f.service == "ftp" and "Anonymous FTP login allowed" in f.text for f in findings):
+        steps.append("FTP: anonymous login CONFIRMED - pull every file, check for creds/config/web-root overlap.")
+    elif ftp_present:
+        steps.append("FTP: anonymous login was NOT confirmed - try harvested/known creds, note the software+version from the banner, and searchsploit it.")
     if 445 in ports or 139 in ports:
         steps.append("SMB: list shares with null/guest, mount readable ones, grep for passwords & scripts.")
     if any(is_web(p, services[p].get('name','')) for p in ports):
-        steps.append("Web: run your own web enum (whatweb/feroxbuster/nikto), hit 401/403/interesting paths, check source & default creds.")
+        if getattr(args, "web", False):
+            steps.append("Web: dir-brute + nikto ran above (--web) - hit 401/403/interesting paths, check source & default creds.")
+        else:
+            steps.append("Web: initial scan fingerprinted only - run 'reconx <host> --web' for dir-brute + nikto, then hit 401/403/interesting paths & default creds.")
     if 22 in ports:
         steps.append("SSH: no shell yet - only useful once you harvest a username+password/key elsewhere.")
     if "snmp" in svc_present:
@@ -2175,7 +2364,89 @@ def _sync_exam(host, host_state, findings, host_profile, runner, args):
 #  discover_ports()/service_scan()/udp_scan()/enum_*() themselves are
 #  untouched pure workers.
 # --------------------------------------------------------------------------- #
+async def _job_discover_ad(host, runner, args, queue, findings,
+                           host_profile, host_state, state_store):
+    """--ad orchestrator: reuse cached ports/services from a prior run (or do a
+    quick DC-port probe when there's no cache), then register ONLY the AD suite.
+    Deliberately queues no service_scan/udp_scan/vuln_scan job - the whole point
+    is a fast, creds-in-hand re-enum of the AD surface, not another full scan."""
+    cached_ports = state_store.data.get("ports") if state_store else None
+    cached_services = state_store.data.get("services") if state_store else None
+    if cached_ports and not runner.dry_run:
+        ports = cached_ports
+        info(f"--ad: reusing {len(ports)} cached port(s) for {host} "
+             f"(from {state_store.path})")
+    else:
+        if not runner.dry_run:
+            info(f"--ad: no cached ports for {host} - quick DC-port probe "
+                 f"({len(_AD_SURFACE_PORTS)} ports)")
+        ports = await _ad_port_probe(host, runner, args)
+        if state_store:
+            await state_store.save_ports_services(ports=ports)
+
+    # Prefer cached nmap service names; otherwise guess from the port number
+    # (reliable for the fixed AD ports the enum modules key off).
+    if cached_services and not runner.dry_run:
+        services = {p: cached_services.get(p, {"name": guess_service(p), "version": ""})
+                    for p in ports}
+    else:
+        services = {p: {"name": guess_service(p), "version": ""} for p in ports}
+    host_state["ports"] = ports
+    host_state["services"] = services
+
+    if not ports:
+        warn(f"{host}: no AD-relevant ports open (not a DC? try a full scan first)")
+        return ports
+    good(f"{host}: {len(ports)} AD port(s): {', '.join(map(str, ports))}")
+
+    register_service_jobs(queue, host, services, runner, args, findings, host_profile)
+    return ports
+
+
+async def _job_discover_web(host, runner, args, queue, findings,
+                            host_profile, host_state, state_store):
+    """--web orchestrator: reuse cached ports/services (or a quick web-port probe),
+    then register ONLY the web modules, running the deep pass (dir-brute + nikto).
+    Like _job_discover_ad, queues no service_scan/udp_scan/vuln_scan job."""
+    cached_ports = state_store.data.get("ports") if state_store else None
+    cached_services = state_store.data.get("services") if state_store else None
+    if cached_ports and not runner.dry_run:
+        ports = cached_ports
+        info(f"--web: reusing {len(ports)} cached port(s) for {host} "
+             f"(from {state_store.path})")
+    else:
+        if not runner.dry_run:
+            info(f"--web: no cached ports for {host} - quick web-port probe "
+                 f"({len(WEB_PORTS)} ports)")
+        ports = await _web_port_probe(host, runner, args)
+        if state_store:
+            await state_store.save_ports_services(ports=ports)
+
+    if cached_services and not runner.dry_run:
+        services = {p: cached_services.get(p, {"name": guess_service(p), "version": ""})
+                    for p in ports}
+    else:
+        services = {p: {"name": guess_service(p), "version": ""} for p in ports}
+    host_state["ports"] = ports
+    host_state["services"] = services
+
+    web_ports = [p for p in ports if is_web(p, services.get(p, {}).get("name", "") or "")]
+    if not web_ports:
+        warn(f"{host}: no web ports open (run a full scan first, or --no-web is set?)")
+        return ports
+    good(f"{host}: {len(web_ports)} web port(s): {', '.join(map(str, web_ports))}")
+
+    register_service_jobs(queue, host, services, runner, args, findings, host_profile)
+    return ports
+
+
 async def job_discover(host, runner, args, queue, findings, host_profile, host_state, state_store):
+    if getattr(args, "ad", False):
+        return await _job_discover_ad(host, runner, args, queue, findings,
+                                      host_profile, host_state, state_store)
+    if getattr(args, "web", False):
+        return await _job_discover_web(host, runner, args, queue, findings,
+                                       host_profile, host_state, state_store)
     if (args.resume and state_store
             and state_store.job_status(f"{host}:discover") == "done"
             and state_store.data.get("ports")):
@@ -2271,8 +2542,17 @@ async def scan_host(host, runner, args):
     good(f"=== target: {host} ===")
 
     state_store = None if runner.dry_run else StateStore(runner.outdir, host)
-    if args.resume and state_store:
+    # --ad/--web reuse a prior run's ports/services, so they need the state loaded
+    # too, not only --resume.
+    focused = getattr(args, "ad", False) or getattr(args, "web", False)
+    if (args.resume or focused) and state_store:
         state_store.load()
+        # A focused re-enum (--ad/--web) reuses cached ports/services but must
+        # actually RE-RUN its enum modules - so drop the prior run's job-status
+        # map, which JobQueue.add_job() would otherwise honour and skip a module
+        # a normal scan already marked "done". --resume keeps it (that's its job).
+        if focused and not args.resume:
+            state_store.data["jobs"] = {}
     if state_store:
         state_store.data["mode"] = args.mode
         state_store.data["started_at"] = state_store.data.get("started_at") or \
@@ -2474,6 +2754,13 @@ AUTHENTICATED MODE
     --spray                 test the ONE supplied credential across every
                             host in a CIDR via SMB/WinRM, then stop
                             (doesn't full-scan the whole range)
+    --ad                    AD-focused re-enum: reuse the ports/services from
+                            a prior run's state file (or a quick DC-port probe
+                            if there's no cache), skip general discovery and
+                            every non-AD module, and run only the AD suite
+                            (SMB/LDAP/Kerberos/DNS/WinRM) with the -u/-p/-H/-d
+                            credential. The fast "got a cred, re-hit the DC"
+                            loop - no second full port scan.
     --bloodhound            once authenticated to LDAP, also run a full
                             bloodhound-python -c All collection in the
                             background (needs bloodhound-python installed)
@@ -2483,6 +2770,23 @@ AUTHENTICATED MODE
     STATUS_ACCOUNT_LOCKED_OUT, but confirm the target's lockout policy
     before spraying a domain account regardless. Authenticated checks
     need netexec (nxc) installed.
+
+WEB ENUMERATION
+    An initial scan only FINGERPRINTS web ports (whatweb + a root grab) -
+    the slow directory brute is deliberately NOT run, because it dominated
+    scan time. When a host looks worth it, re-run with --web for the deep
+    pass, exactly like --ad but for the web surface.
+
+    --web                   web-focused deep re-enum: reuse the cached
+                            ports/services from a prior run (or a quick
+                            web-port probe if there's no cache), skip every
+                            non-web module, and run the deep pass on each web
+                            port - directory brute (feroxbuster, else
+                            gobuster) + nikto. No second full port scan.
+    --no-web                skip web enumeration entirely (not even the
+                            fingerprint)
+    --web-timeout SECONDS   max seconds for the per-web-port directory
+                            brute under --web (default 180)
 
 TUNING / ADVANCED
     --concurrency N          async port-scan concurrency (default 800; if
@@ -2519,6 +2823,9 @@ EXAMPLES
 
     reconx target.htb -o loot/
         write results under loot/ instead of reconx-results/
+
+    reconx 10.10.10.10 --web
+        deep web re-enum (dir-brute + nikto) reusing the earlier scan's ports
 
     reconx 10.10.10.10 --dry-run
         see the exact command plan without running anything
@@ -2595,6 +2902,10 @@ def build_argparser():
     cg.add_argument("--local-auth", action="store_true", help="treat creds as LOCAL account, not domain")
     cg.add_argument("--spray", action="store_true",
                     help="spray the ONE credential across all hosts (CIDR) via SMB/WinRM")
+    cg.add_argument("--ad", action="store_true",
+                    help="AD-focused re-enum: reuse cached ports (or a quick DC-port "
+                         "probe), skip general discovery + non-AD modules, and run only "
+                         "the AD suite (SMB/LDAP/Kerberos/DNS/WinRM) with the -u/-p/-H/-d creds")
     p.add_argument("--mode", choices=("quick", "full", "deep"), default=None,
                    help="scan profile: quick (fast, no UDP/scripts), full (default), "
                         "deep (heavier vuln-scan scripts auto-on)")
@@ -2625,7 +2936,11 @@ def build_argparser():
     p.add_argument("--no-exploit-search", action="store_true",
                    help="skip searchsploit lookups for detected service versions")
     p.add_argument("--no-web", action="store_true",
-                   help="skip automated web enumeration (whatweb/feroxbuster)")
+                   help="skip automated web enumeration (whatweb fingerprint)")
+    p.add_argument("--web", action="store_true",
+                   help="web-focused deep re-enum: reuse cached ports (or a quick "
+                        "web-port probe), skip non-web modules, and run the deep web "
+                        "pass (dir-brute + nikto). Initial scans are fingerprint-only.")
     p.add_argument("--web-timeout", type=int, default=180,
                    help="max seconds for the per-web-port directory brute (default 180)")
     p.add_argument("-v", "--verbose", action="store_true", help="print every command as it runs")
@@ -2719,6 +3034,26 @@ async def amain(args):
     elif args.spray:
         bad("--spray needs a credential (-u with -p or -H). Ignoring.")
         args.spray = False
+
+    if getattr(args, "web", False) and getattr(args, "no_web", False):
+        warn("--web with --no-web is contradictory - --web wins; enabling web enum.")
+        args.no_web = False
+
+    if getattr(args, "ad", False) and getattr(args, "web", False):
+        warn("--ad and --web are both focused re-enum modes - can't combine; "
+             "keeping --ad and ignoring --web this run.")
+        args.web = False
+
+    if getattr(args, "ad", False):
+        if have_creds(args):
+            good(f"--ad: AD-focused re-enum with {C.M}{cred_label(args)}{C.END} "
+                 f"(reusing cached ports; non-AD modules skipped)")
+        else:
+            warn("--ad without credentials - running UNAUTHENTICATED AD enum "
+                 "(null/guest only). Add -u/-p/-H (+ -d) for the full AD suite.")
+    elif getattr(args, "web", False):
+        good("--web: web-focused deep re-enum (dir-brute + nikto; reusing cached "
+             "ports; non-web modules skipped)")
 
     hosts = expand_targets(args.target)
     if len(hosts) > 1 and args.ping_sweep and not args.dry_run:
