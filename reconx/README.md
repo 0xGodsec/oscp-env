@@ -116,6 +116,14 @@ module, and runs **only** the AD suite (SMB/LDAP/Kerberos/DNS/WinRM) with the
 scan surfaces a credential; without creds it degrades to unauthenticated
 null/guest AD enum and warns.
 
+> Credentials are **not** persisted in the state file — only ports/services are.
+> So you can safely `--ad` with a *different* credential than the initial run:
+> it authenticates with whatever you pass and re-runs the AD modules fresh
+> (overwriting their output). Just note `--ad` re-runs **only** the AD suite —
+> non-AD artifacts from the earlier run (web/ftp/db output) are left untouched,
+> not refreshed with the new creds. Use a full `reconx -u … -p …` if you want
+> everything re-checked with the new credential.
+
 > Credential reuse is the fastest path from foothold to root. reconx sprays a
 > **single** credential (never a list) and stops on `STATUS_ACCOUNT_LOCKED_OUT`,
 > but you should still confirm the lockout policy before spraying a domain

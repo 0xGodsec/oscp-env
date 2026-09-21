@@ -2856,6 +2856,12 @@ AUTHENTICATED MODE
                             (SMB/LDAP/Kerberos/DNS/WinRM) with the -u/-p/-H/-d
                             credential. The fast "got a cred, re-hit the DC"
                             loop - no second full port scan.
+                            Creds are NOT persisted between runs: each --ad run
+                            authenticates with the creds you pass it, so running
+                            --ad with a different credential is fine (it re-runs
+                            the AD modules fresh). It only touches the AD suite,
+                            though - non-AD output from a prior run is left as-is,
+                            not refreshed with the new creds.
     --bloodhound            once authenticated to LDAP, also run a full
                             bloodhound-python -c All collection in the
                             background (needs bloodhound-python installed)
