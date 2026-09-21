@@ -33,10 +33,13 @@ Fill in `targets/<box>/notes.md` as you go; copy into `report/` at the end.
 
 ## Notes
 - `serve/` tools: linpeas, pspy64, winPEAS, nc.exe, chisel(+.exe, v1.10.1 matched),
-  mimikatz, PrintSpoofer64, GodPotato-NET4, RunasCs, SharpHound, PowerView/PowerUp/powercat.
+  ligolo-agent(+.exe), mimikatz, PrintSpoofer64, GodPotato-NET4, RunasCs,
+  SharpHound, PowerView/PowerUp/powercat.
 - Install rlwrap for nicer shells:  `sudo apt install -y rlwrap`
 - `serve.sh` auto-fills your `tun0` VPN IP in the printed download one-liners and
   prefers `updog` (adds a browser **upload** endpoint at `/upload` to pull loot
   back) → `fuzzy-httpserver` (typo-tolerant) → `python -m http.server`. For the
   upload endpoint:  `pip install updog`
 - Verify kit integrity anytime:  `cd serve && sha256sum -c MANIFEST.sha256`
+- Regenerate the manifest after adding/updating a tool (run from `serve/`):
+  `find . -type f ! -name MANIFEST.sha256 | sort | xargs sha256sum > MANIFEST.sha256`
