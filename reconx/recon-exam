@@ -137,9 +137,10 @@ def project_base(settings):
 
 
 def scaffold(ws):
+    # Only scans/ (populated by reconx) + notes.md. The old loot/exploits/www/
+    # screenshots placeholders were never written to by any tool and just left
+    # empty clutter under every per-host dir - create them by hand if you use them.
     os.makedirs(os.path.join(ws, "scans"), exist_ok=True)
-    for sub in ("loot", "exploits", "www", "screenshots"):
-        os.makedirs(os.path.join(ws, sub), exist_ok=True)
     notes = os.path.join(ws, "notes.md")
     if not os.path.isfile(notes):
         with open(notes, "w") as f:
