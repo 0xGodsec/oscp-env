@@ -141,8 +141,10 @@ def _findings_rows(findings):
 #  1. Enriched per-host NOTES.md
 # --------------------------------------------------------------------------- #
 def enrich_host_notes(host, services, udp, findings, host_profile, outdir,
-                      next_steps=None):
-    path = os.path.join(outdir, host, "NOTES.md")
+                      next_steps=None, host_dir=None):
+    # host_dir overrides the default <outdir>/<host> layout (reconx passes it in
+    # --workspace/flat mode so notes land directly under scans/reconx/).
+    path = os.path.join(host_dir or os.path.join(outdir, host), "NOTES.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     ht = _host_type_of(host_profile)
     links = service_links(services, host_profile)

@@ -1,0 +1,30 @@
+# Normalize all text files to LF in the repo and on checkout. These are
+# shell/python tools meant to run on Linux (Kali); a CRLF checkout breaks
+# bash heredocs and script shebangs. text=auto lets git detect binary files
+# and leave them untouched, while eol=lf pins line endings for text.
+* text=auto eol=lf
+
+# Executable tools without a file extension (LF is mandatory for these).
+env/setup_pentest_env       text eol=lf
+env/md2pdf_reportgen        text eol=lf
+env/toggle-terminal-logging text eol=lf
+env/myterm_settings         text eol=lf
+env/terminator_config       text eol=lf
+reconx/recon                text eol=lf
+reconx/recon-exam           text eol=lf
+
+# Servable tool kit: vendored third-party payloads, byte-for-byte verified by
+# serve/MANIFEST.sha256. Never convert line endings here or the checksums break.
+exam-harness/serve/** -text
+
+# Binary assets - never touch line endings or try to diff as text.
+*.png  binary
+*.gif  binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.pdb  binary
+*.docx binary
+*.pdf  binary
+*.zip  binary
+*.pyc  binary

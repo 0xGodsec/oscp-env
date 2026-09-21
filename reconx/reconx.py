@@ -201,10 +201,23 @@ class Runner:
         self.resume = resume
         self.plan = []          # for --dry-run
         self.sem = None         # set once loop exists
+        # flat=True drops the per-host directory level from every output path -
+        # used in --workspace mode (exactly one host per run), so results land
+        # directly under <workspace>/scans/reconx/ instead of a redundant
+        # <workspace>/scans/reconx/<host>/ level. See hostdir() and amain().
+        self.flat = False
+
+    def hostdir(self, host):
+        """The per-host output base. Flat mode collapses it to outdir itself."""
+        return self.outdir if self.flat else os.path.join(self.outdir, host)
 
     async def run(self, cmd, outfile=None, label=None, timeout=None):
         """Run a shell command, tee output to a file, return (rc, stdout+stderr)."""
         label = label or cmd.split()[0]
+        # Callers pass outfile as "<host>/<service>/..."; in flat mode strip that
+        # leading host segment so it maps under outdir directly (single host only).
+        if self.flat and outfile and "/" in outfile:
+            outfile = outfile.split("/", 1)[1]
         if self.dry_run:
             self.plan.append((label, cmd, outfile))
             return 0, ""
@@ -310,8 +323,9 @@ class StateStore:
     simply has no entry, so "absent -> not done -> re-run" falls out for free
     without a separate stale "running" state to worry about."""
 
-    def __init__(self, outdir, host):
-        self.path = os.path.join(outdir, host, ".reconx_state.json")
+    def __init__(self, outdir, host, flat=False):
+        base = outdir if flat else os.path.join(outdir, host)
+        self.path = os.path.join(base, ".reconx_state.json")
         self.data = {"target": host, "mode": None, "started_at": None,
                      "ports": [], "services": {}, "udp": {}, "jobs": {}, "findings": []}
         self._lock = asyncio.Lock()
@@ -1144,7 +1158,7 @@ async def _smb_hosts_file(nxc, host, runner, args, findings):
     before the file write on some paths), we assemble the identical line from the
     banner ourselves."""
     tag = f"{host}/smb"
-    hosts_path = os.path.join(runner.outdir, host, "smb", "hosts")
+    hosts_path = os.path.join(runner.hostdir(host), "smb", "hosts")
     auth = nxc_auth(args) if have_creds(args) else "-u guest -p ''"
 
     def _read_line():
@@ -1235,7 +1249,7 @@ async def enum_smb(host, runner, args, findings):
             # by default) and writes a full per-file JSON inventory into the box's
             # smb/ dir; we tee its stdout summary and scan it for findings. Slow on
             # big shares, so it gets the longer enum timeout and runs last.
-            spider_dir = os.path.join(runner.outdir, tag)
+            spider_dir = os.path.join(runner.hostdir(host), "smb")
             rc, out = await runner.run(
                 f"{nxc} smb {host} {auth} -M spider_plus -o OUTPUT_FOLDER='{spider_dir}'",
                 f"{tag}/auth_nxc_spider_plus.txt", f"{nxc} smb -M spider_plus",
@@ -1303,7 +1317,7 @@ async def _impacket_roast_check(host, dom, runner, args, findings, tag, users_ou
     args.domain, whenever the former is available."""
     if not dom:
         return
-    loot_dir = os.path.join(runner.outdir, host, "ldap", "loot")
+    loot_dir = os.path.join(runner.hostdir(host), "ldap", "loot")
     if not runner.dry_run:
         os.makedirs(loot_dir, exist_ok=True)
 
@@ -1387,7 +1401,7 @@ async def enum_bloodhound(host, dom, runner, args, findings):
     bin_name = _bloodhound_bin()
     if not bin_name or not dom:
         return
-    bh_dir = os.path.join(runner.outdir, host, "ldap", "bloodhound")
+    bh_dir = os.path.join(runner.hostdir(host), "ldap", "bloodhound")
     if not runner.dry_run:
         os.makedirs(bh_dir, exist_ok=True)
     if getattr(args, "hash", None):
@@ -1440,7 +1454,7 @@ async def enum_ldap(host, port, runner, args, findings, queue):
         users_out = ""
         if nxc:
             auth = nxc_auth(args)
-            loot_dir = os.path.join(runner.outdir, host, "ldap", "loot")
+            loot_dir = os.path.join(runner.hostdir(host), "ldap", "loot")
             if not runner.dry_run:
                 os.makedirs(loot_dir, exist_ok=True)
             asrep_out = os.path.abspath(os.path.join(loot_dir, "asrep.txt"))
@@ -2325,8 +2339,8 @@ def suggest_next(services, findings, host_profile, args=None):
     return steps
 
 
-def write_markdown(host, services, udp, findings, outdir, host_profile):
-    path = os.path.join(outdir, host, "NOTES.md")
+def write_markdown(host, services, udp, findings, host_dir, host_profile):
+    path = os.path.join(host_dir, "NOTES.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(f"# recon notes - {host}\n\n_generated {datetime.now():%Y-%m-%d %H:%M}_\n\n")
@@ -2372,10 +2386,10 @@ def _write_notes(host, host_state, findings, host_profile, runner, args):
         try:
             return reconx_notes.enrich_host_notes(
                 host, services, udp, findings, host_profile, runner.outdir,
-                next_steps=steps)
+                next_steps=steps, host_dir=runner.hostdir(host))
         except Exception as e:  # never let note-gen kill a scan
             warn(f"enriched notes failed ({e}); falling back to plain NOTES.md")
-    return write_markdown(host, services, udp, findings, runner.outdir, host_profile)
+    return write_markdown(host, services, udp, findings, runner.hostdir(host), host_profile)
 
 
 def _merge_workspace(host, host_state, findings, host_profile, runner, args):
@@ -2397,7 +2411,7 @@ def _merge_workspace(host, host_state, findings, host_profile, runner, args):
         reconx_notes.merge_workspace_notes(
             notes_path, host, host_state["services"], host_state["udp"],
             findings, host_profile,
-            os.path.abspath(os.path.join(runner.outdir, host)), next_steps=steps)
+            os.path.abspath(runner.hostdir(host)), next_steps=steps)
         good(f"findings merged into workspace notes: {notes_path}")
     except Exception as e:
         warn(f"workspace notes merge skipped for {host}: {e}")
@@ -2618,11 +2632,11 @@ async def scan_host(host, runner, args):
     t0 = time.time()
     host_profile = {"dc_signals": 0}
     host_state = {"ports": [], "services": {}, "udp": {}}
-    os.makedirs(os.path.join(runner.outdir, host, "scans"), exist_ok=True)
+    os.makedirs(os.path.join(runner.hostdir(host), "scans"), exist_ok=True)
 
     good(f"=== target: {host} ===")
 
-    state_store = None if runner.dry_run else StateStore(runner.outdir, host)
+    state_store = None if runner.dry_run else StateStore(runner.outdir, host, flat=runner.flat)
     # --ad/--web reuse a prior run's ports/services, so they need the state loaded
     # too, not only --resume.
     focused = getattr(args, "ad", False) or getattr(args, "web", False)
@@ -3146,6 +3160,14 @@ async def amain(args):
     if args.spray and have_creds(args) and len(hosts) > 1:
         await spray_credential(hosts, runner, args)
         return
+
+    # --workspace runs one host per invocation, and its workspace path is already
+    # per-host (base/<ip>), so drop reconx's own <host> subdir - output lands at
+    # <workspace>/scans/reconx/ instead of the redundant .../reconx/<ip>/. Only
+    # when a single host resolved, so a manual `reconx <cidr> --workspace` still
+    # namespaces per host and can't collide.
+    if getattr(args, "workspace", None) and len(hosts) == 1:
+        runner.flat = True
 
     if len(hosts) > 1:
         info(f"scanning {len(hosts)} host(s) sequentially (per-host modules run in parallel)")
