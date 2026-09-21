@@ -1140,6 +1140,12 @@ def _hosts_line_from_banner(host, out):
     if not (nm and dm and nm.group(1) and dm.group(1)):
         return ""
     name, domain = nm.group(1).strip(), dm.group(1).strip()
+    # name/domain come from an attacker-controlled SMB banner and land verbatim in
+    # an /etc/hosts line. The (name:...)/(domain:...) capture is [^)]*, which also
+    # matches whitespace/newlines - a crafted banner could smuggle extra hosts
+    # entries. Real names are [A-Za-z0-9.-]; reject anything else outright.
+    if not (re.fullmatch(r"[A-Za-z0-9.-]+", name) and re.fullmatch(r"[A-Za-z0-9.-]+", domain)):
+        return ""
     dc_part = f" {domain}" if _SMB_BANNER_ISDC_RX.search(out or "") else ""
     return f"{host}     {name}.{domain}{dc_part} {name}"
 
@@ -1440,7 +1446,9 @@ async def enum_ldap(host, port, runner, args, findings, queue):
             real_domain = _dn_to_domain(base)
             findings.append(Finding("HIGH", "ldap", port, f"LDAP base found: {base}"))
             rc, out2 = await runner.run(
-                f"ldapsearch -x -H ldap://{host}:{port} -b '{base}'",
+                # base comes from the target's rootDSE; shlex.quote it rather than
+                # wrapping in a literal '...' (an embedded quote would break out).
+                f"ldapsearch -x -H ldap://{host}:{port} -b {shlex.quote(base)}",
                 f"{tag}/anon_dump.txt", "ldap-dump", timeout=args.enum_timeout)
             scan_findings(out2, "ldap", port, findings)
     # authenticated: netexec LDAP enum + kerberoast/asreproast cross-check + BloodHound hint
@@ -1658,8 +1666,15 @@ async def enum_dns(host, port, runner, args, findings):
         if dom in tried:
             continue
         tried.add(dom)
+        # dom is derived from an attacker-controlled PTR record and flows into a
+        # shell command + an output path. A real DNS zone name is only
+        # [a-z0-9.-]; anything else is noise or a shell-injection attempt (e.g. a
+        # PTR of "a.$(id).com"), so skip it rather than feed it to the shell.
+        # shlex.quote below is belt-and-suspenders on top of this validation.
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", dom):
+            continue
         rc3, out3 = await runner.run(
-            f"dig @{host} -p {port} {dom} axfr +time=10 +tries=1",
+            f"dig @{host} -p {port} {shlex.quote(dom)} axfr +time=10 +tries=1",
             f"{tag}/axfr_{dom}.txt", "dig-axfr", timeout=30)
         if out3 and "XFR size:" in out3:
             findings.append(Finding("CRITICAL", "dns", port,
