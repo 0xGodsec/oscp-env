@@ -188,6 +188,17 @@ then wire it into `register_service_jobs()`. Add a detection: append a
 `(severity, regex, service, message)` tuple to `FINDING_RULES`. That's the
 whole extension surface.
 
+## Tests
+
+A `pytest` suite in `tests/` covers the pure helpers - parsing, service/host
+classification, credential-string building, the findings regex engine, the
+note wikilinks, and the flat-mode path logic (plus a couple of security
+regressions, e.g. that a crafted SMB banner can't inject `/etc/hosts` lines):
+
+```bash
+cd reconx && python3 -m pytest -q        # pytest is dev-only; reconx itself stays stdlib
+```
+
 ## Automated two-pass exam recon (`recon-exam`)
 
 ### recon-exam speed & triage flags
