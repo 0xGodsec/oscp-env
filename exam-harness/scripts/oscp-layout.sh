@@ -11,7 +11,7 @@ fi
 WD_ENV=""; [ -n "$WORKDIR" ] && WD_ENV="export WORKDIR='$WORKDIR'; "
 # window 0: serve (top) + listener (bottom-left) + work (bottom-right)
 tmux new-session -d -s "$SES" -n main -c "$KIT"
-tmux send-keys  -t "$SES":main "${WD_ENV}echo '[serve] run: ./scripts/serve.sh 80'" C-m
+tmux send-keys  -t "$SES":main "${WD_ENV}echo '[serve] run: ./scripts/serve.sh 7890'" C-m
 tmux split-window -v -t "$SES":main -c "$KIT"
 tmux send-keys  -t "$SES":main "${WD_ENV}echo '[listener] run: ./scripts/listener.sh 443'" C-m
 tmux split-window -h -t "$SES":main -c "$KIT"
