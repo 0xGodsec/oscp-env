@@ -14,7 +14,7 @@ OSCP-Exam/
 ## Exam-day flow
 ```
 cd ~/Desktop/OSCP-Notes-and-Environment/OSCP-Exam
-./scripts/serve.sh 80 &                      # serve tools (needs sudo for :80)
+./scripts/serve.sh 7890 &                    # serve tools (default 7890, no sudo; pass 80 to use :80)
 ./scripts/newtarget.sh box1 10.10.10.10      # workspace + notes.md
 ./scripts/recon.sh 10.10.10.10 box1          # auto nmap + web enum
 ./scripts/listener.sh 443                     # catch shells

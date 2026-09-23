@@ -14,7 +14,7 @@ One command builds the whole screen (serve | listener | work) in tmux:
 export WORKDIR=~/Desktop/HTB     # optional, for practice
 ./scripts/oscp-layout.sh         # attach later: tmux attach -t oscp
 ```
-Panes: 1) `./scripts/serve.sh 80` (leave running)  2) `./scripts/listener.sh 443`
+Panes: 1) `./scripts/serve.sh 7890` (leave running)  2) `./scripts/listener.sh 443`
 (re-run per catch)  3) **Work** — everything else
 
 **Log everything (evidence backup):** start your Work shell inside a logged

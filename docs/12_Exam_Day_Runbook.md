@@ -60,7 +60,7 @@ scripts/oscp-layout.sh exam        # attach later: tmux attach -t exam
 
 Start your **serve** and **listener** panes so they're always ready:
 ```bash
-scripts/serve.sh 80                 # serve the kit (from the right serve/ subdir)
+scripts/serve.sh 7890               # serve the kit (from the right serve/ subdir)
 scripts/listener.sh 443             # catch-all revshell listener
 ```
 
