@@ -8,6 +8,8 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   3. python http.server - download only, always present
 cd "$KIT/serve" || exit 1
 PORT="${1:-7890}"
+[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || {
+  echo "[!] invalid port '$PORT' - give a number 1-65535 (default 7890)."; exit 1; }
 
 # Ports <1024 need root to bind; the default (7890) does not, so don't force a
 # sudo password prompt when it isn't required.

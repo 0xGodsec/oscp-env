@@ -54,8 +54,12 @@ if [ -d "$REPO/exam-harness/scripts" ]; then
   say "linking exam-harness scripts…"
   for s in "$REPO/exam-harness/scripts/"*.sh; do
     [ -f "$s" ] || continue
+    cmd="$(basename "${s%.sh}")"
+    # don't shadow the ReconX launchers linked above (recon, recon-exam):
+    # exam-harness/scripts/recon.sh is a different, simpler tool.
+    case "$cmd" in recon|recon-exam) warn "skipping $cmd.sh (would shadow the ReconX '$cmd' command)"; continue ;; esac
     chmod +x "$s" 2>/dev/null || true
-    sudo ln -sf "$s" "/usr/local/bin/$(basename "${s%.sh}")"
+    sudo ln -sf "$s" "/usr/local/bin/$cmd"
   done
 fi
 

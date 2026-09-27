@@ -31,3 +31,6 @@ venv/
 .idea/
 *.swp
 .DS_Store
+
+# exam runtime: captured flags (proof.sh recreates the header on first run)
+exam-harness/report/proof-tally.csv

@@ -28,7 +28,7 @@ while getopts "r:fo:x:PAh" o; do case "$o" in
 esac; done
 [ -z "$RANGE" ] && [ "$HARVEST" = 0 ] && { echo "[!] give -r <range> or -f. -h for help."; exit 1; }
 mkdir -p "$(dirname "$OUT")"
-TMP=$(mktemp); trap 'rm -f "$TMP"' EXIT
+TMP=$(mktemp); trap 'rm -f "$TMP" "$TMP".*' EXIT
 
 if [ -n "$RANGE" ]; then
   PC=""; [ "$PROXY" = 1 ] && PC="proxychains4 -q"

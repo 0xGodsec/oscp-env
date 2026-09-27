@@ -251,6 +251,30 @@ class TestHostdir:
 
 
 # --------------------------------------------------------------------------- #
+# Runner._mask - secrets must never reach the on-disk cached-command header
+# --------------------------------------------------------------------------- #
+class TestMask:
+    def test_masks_password_and_hash(self):
+        r = reconx.Runner("/out")
+        r.secrets = {"S3cret!", "aad3b435b51404eeaad3b435b51404ee"}
+        masked = r._mask("nxc smb 10.0.0.1 -u bob -p 'S3cret!' -H aad3b435b51404eeaad3b435b51404ee")
+        assert "S3cret!" not in masked
+        assert "aad3b435b51404eeaad3b435b51404ee" not in masked
+        assert masked.count("***") == 2
+
+    def test_masks_secret_inside_shell_quotes(self):
+        # shlex.quote wraps a special-char password in quotes; the raw secret is
+        # still a substring, so masking must still catch it.
+        r = reconx.Runner("/out")
+        r.secrets = {"p@ss word"}
+        assert "p@ss word" not in r._mask("tool --password='p@ss word'")
+
+    def test_no_secrets_is_noop(self):
+        r = reconx.Runner("/out")
+        assert r._mask("nmap -sV 10.0.0.1") == "nmap -sV 10.0.0.1"
+
+
+# --------------------------------------------------------------------------- #
 # reconx_notes wikilinks
 # --------------------------------------------------------------------------- #
 class TestNotes:
