@@ -5,9 +5,21 @@ import sys
 import socket
 import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import unquote, urlsplit
 import re
 
-BASE_DIR = "."  # default to current dir
+BASE_DIR = "."  # default to current dir (resolved to an absolute realpath in main)
+
+# Resolve a request path to an absolute path confined to BASE_DIR.
+# URL-decodes, drops the query/fragment, and rejects traversal (../, symlink
+# escapes, absolute paths) by comparing realpaths. Returns None if outside.
+def resolve_within_base(url_path):
+    rel = unquote(urlsplit(url_path).path).lstrip("/")
+    base = os.path.realpath(BASE_DIR)
+    candidate = os.path.realpath(os.path.join(base, rel))
+    if candidate == base or candidate.startswith(base + os.sep):
+        return candidate
+    return None
 
 # Function to get the IP address of tun0 interface
 def get_tun0_ip():
@@ -34,11 +46,36 @@ def get_tun0_ip():
 
 # Custom handler for HTTP server
 class Handler(BaseHTTPRequestHandler):
+    def _reject(self, code, msg):
+        self.send_response(code)
+        self.end_headers()
+        self.wfile.write(msg.encode() + b"\n")
+
     def do_PUT(self):
-        length = int(self.headers['Content-Length'])
-        path = os.path.join(BASE_DIR, self.path.lstrip("/"))
+        path = resolve_within_base(self.path)
+        if path is None:
+            return self._reject(403, "Forbidden: path escapes server root.")
+
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+            if length < 0:
+                raise ValueError
+        except ValueError:
+            return self._reject(411, "Length Required: valid Content-Length needed.")
+
+        if os.path.isdir(path):
+            return self._reject(409, "Conflict: target is a directory.")
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        remaining = length
         with open(path, "wb") as f:
-            f.write(self.rfile.read(length))
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                f.write(chunk)
+                remaining -= len(chunk)
+        print(f"[+] received {length - remaining} bytes -> {path}")
         self.send_response(200)
         self.end_headers()
 
@@ -46,7 +83,9 @@ class Handler(BaseHTTPRequestHandler):
         self.do_PUT()  # Same handler for simplicity
 
     def do_GET(self):
-        path = os.path.join(BASE_DIR, self.path.lstrip("/"))
+        path = resolve_within_base(self.path)
+        if path is None:
+            return self._reject(403, "Forbidden: path escapes server root.")
         if os.path.isfile(path):
             self.send_response(200)
             self.send_header('Content-type', 'application/octet-stream')
@@ -54,9 +93,7 @@ class Handler(BaseHTTPRequestHandler):
             with open(path, 'rb') as f:
                 self.wfile.write(f.read())
         else:
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b"File not found.\n")
+            self._reject(404, "File not found.")
 
 # Main function to start the server and print usage info
 def main():
@@ -71,7 +108,10 @@ def main():
         sys.exit(1)
 
     global BASE_DIR
-    BASE_DIR = sys.argv[2] if len(sys.argv) > 2 else "."
+    BASE_DIR = os.path.realpath(sys.argv[2] if len(sys.argv) > 2 else ".")
+    if not os.path.isdir(BASE_DIR):
+        print(f"Error: serve directory does not exist: {BASE_DIR}")
+        sys.exit(1)
 
     # Get the IP address of tun0
     ip = get_tun0_ip()
