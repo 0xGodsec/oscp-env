@@ -12,8 +12,11 @@ if os.geteuid() != 0:
     print("[!] This script must be run as root.")
     sys.exit(1)
 
-original_uid = int(os.environ.get("SUDO_UID"))
-original_gid = int(os.environ.get("SUDO_GID"))
+# Preserve the invoking user's ownership on output dirs. Via sudo these are the
+# real user; run directly as root (no sudo) they're unset, so fall back to the
+# current ids instead of crashing on int(None).
+original_uid = int(os.environ.get("SUDO_UID") or os.getuid())
+original_gid = int(os.environ.get("SUDO_GID") or os.getgid())
 
 # Shared list and lock for ping sweep results
 up_hosts = []
@@ -31,7 +34,24 @@ def run_command(command, debug=False):
 def find_live_hosts_nmap(ip_range, debug):
     print(f"[*] Scanning for live hosts in {ip_range} with nmap...")
     output = run_command(["nmap", "-sn", ip_range], debug)
-    live_ips = re.findall(r"Nmap scan report for ([\d\.]+)\nHost is up", output)
+    # `nmap -sn` prints a "scan report for" line only for hosts it found up.
+    # With reverse DNS the line is "... for host.name (1.2.3.4)"; without it,
+    # "... for 1.2.3.4". The old regex only matched the bare-IP form and
+    # silently dropped every host that had a PTR record. Pull the IP from the
+    # parentheses when present, else the trailing token, and keep only valid IPs.
+    live_ips = []
+    for line in output.splitlines():
+        m = re.match(r"Nmap scan report for (.+)", line)
+        if not m:
+            continue
+        rest = m.group(1).strip()
+        paren = re.search(r"\(([\d.]+)\)", rest)
+        ip = paren.group(1) if paren else rest
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        live_ips.append(ip)
     print(f"[+] Found {len(live_ips)} live hosts:")
     for ip in live_ips:
         print(f"    {ip}")
@@ -103,7 +123,11 @@ def find_live_hosts_ping(ip_range, threads=100, count=8, timeout=1, debug=False)
 def fast_tcp_scan(ip, debug):
     output_dir = os.path.abspath(ip)
     os.makedirs(output_dir, exist_ok=True)
-    command = ["nmap", "-sS", "-A", "-Pn", ip, "-p-", "-oN", os.path.join(output_dir, "tcp.scan"), "--min-rate=2000"]
+    # NOTE: distinct filename from tcp_scan(). In the default (non-internal) run
+    # both fast_tcp_scan and tcp_scan launch for the same host at the same time;
+    # writing both to "tcp.scan" meant two concurrent nmap processes clobbered a
+    # single file and corrupted/lost one scan's output. Keep them separate.
+    command = ["nmap", "-sS", "-A", "-Pn", ip, "-p-", "-oN", os.path.join(output_dir, "tcp_fast.scan"), "--min-rate=2000"]
     run_command(command, debug)
 
     # set owner to regular user
@@ -139,7 +163,9 @@ def tcp_scan_1000(ip, debug):
 def fast_udp_scan(ip, debug):
     output_dir = os.path.abspath(ip)
     os.makedirs(output_dir, exist_ok=True)
-    command = ["nmap", "-sU", "-sV", "-Pn", ip, "-oN", os.path.join(output_dir, "udp.scan"), "--top-ports=100"]
+    # distinct filename from udp_scan() for the same reason as tcp_fast.scan:
+    # both UDP scans run concurrently and must not share one output file.
+    command = ["nmap", "-sU", "-sV", "-Pn", ip, "-oN", os.path.join(output_dir, "udp_fast.scan"), "--top-ports=100"]
     run_command(command, debug)
 
     # set owner to regular user
