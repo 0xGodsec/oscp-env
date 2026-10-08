@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+
+import subprocess
+import sys
+import re
+import os
+import threading
+import ipaddress
+from argparse import ArgumentParser
+
+if os.geteuid() != 0:
+    print("[!] This script must be run as root.")
+    sys.exit(1)
+
+# Preserve the invoking user's ownership on output dirs. Via sudo these are the
+# real user; run directly as root (no sudo) they're unset, so fall back to the
+# current ids instead of crashing on int(None).
+original_uid = int(os.environ.get("SUDO_UID") or os.getuid())
+original_gid = int(os.environ.get("SUDO_GID") or os.getgid())
+
+# Shared list and lock for ping sweep results
+up_hosts = []
+lock = threading.Lock()
+
+def run_command(command, debug=False):
+    if debug:
+        print(f"[DEBUG] Running: {' '.join(command)}")
+        result = subprocess.run(command, capture_output=False)
+        return ""
+    else:
+        result = subprocess.run(command, capture_output=True, text=True)
+        return result.stdout
+
+def find_live_hosts_nmap(ip_range, debug):
+    print(f"[*] Scanning for live hosts in {ip_range} with nmap...")
+    output = run_command(["nmap", "-sn", ip_range], debug)
+    # `nmap -sn` prints a "scan report for" line only for hosts it found up.
+    # With reverse DNS the line is "... for host.name (1.2.3.4)"; without it,
+    # "... for 1.2.3.4". The old regex only matched the bare-IP form and
+    # silently dropped every host that had a PTR record. Pull the IP from the
+    # parentheses when present, else the trailing token, and keep only valid IPs.
+    live_ips = []
+    for line in output.splitlines():
+        m = re.match(r"Nmap scan report for (.+)", line)
+        if not m:
+            continue
+        rest = m.group(1).strip()
+        paren = re.search(r"\(([\d.]+)\)", rest)
+        ip = paren.group(1) if paren else rest
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        live_ips.append(ip)
+    print(f"[+] Found {len(live_ips)} live hosts:")
+    for ip in live_ips:
+        print(f"    {ip}")
+    return live_ips
+
+def ping_host(ip, count=8, timeout=1, debug=False):
+    try:
+        cmd = ["ping", "-c", str(count), "-W", str(timeout), str(ip)]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+        if debug:
+            print(result.stdout)
+
+        match = re.search(r", (\d+) received", result.stdout)
+        if match and int(match.group(1)) > 0:
+            with lock:
+                up_hosts.append(str(ip))
+            if debug:
+                print(f"[+] Host up: {ip}")
+        else:
+            if debug:
+                print(f"[-] No response from: {ip}")
+    except Exception as e:
+        if debug:
+            print(f"[!] Error pinging {ip}: {e}")
+
+def worker(queue, count, timeout, debug):
+    while True:
+        try:
+            ip = queue.get_nowait()
+        except:
+            break
+        ping_host(ip, count, timeout, debug)
+        queue.task_done()
+
+def find_live_hosts_ping(ip_range, threads=100, count=8, timeout=1, debug=False):
+    global up_hosts
+    up_hosts = []
+
+    import queue
+    print(f"[*] Scanning for live hosts in {ip_range} with ping sweep...")
+    try:
+        network = ipaddress.ip_network(ip_range, strict=False)
+    except ValueError as e:
+        print(f"Invalid CIDR: {e}")
+        return []
+
+    ip_queue = queue.Queue()
+    for ip in network.hosts():
+        ip_queue.put(ip)
+
+    threads_list = []
+    for _ in range(threads):
+        t = threading.Thread(target=worker, args=(ip_queue, count, timeout, debug))
+        t.daemon = True
+        t.start()
+        threads_list.append(t)
+
+    ip_queue.join()
+
+    print(f"[+] Ping sweep found {len(up_hosts)} live hosts:")
+    for ip in up_hosts:
+        print(f"    {ip}")
+    return up_hosts
+
+def fast_tcp_scan(ip, debug):
+    output_dir = os.path.abspath(ip)
+    os.makedirs(output_dir, exist_ok=True)
+    # NOTE: distinct filename from tcp_scan(). In the default (non-internal) run
+    # both fast_tcp_scan and tcp_scan launch for the same host at the same time;
+    # writing both to "tcp.scan" meant two concurrent nmap processes clobbered a
+    # single file and corrupted/lost one scan's output. Keep them separate.
+    command = ["nmap", "-sS", "-A", "-Pn", ip, "-p-", "-oN", os.path.join(output_dir, "tcp_fast.scan"), "--min-rate=2000"]
+    run_command(command, debug)
+
+    # set owner to regular user
+    subprocess.run(["chown", "-R", f"{original_uid}:{original_gid}", output_dir], check=True)
+
+    print(f"[+] Fast TCP scan for {ip} finished.")
+
+def tcp_scan(ip, debug):
+    output_dir = os.path.abspath(ip)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"[*] Scanning {ip} with full TCP scan...")
+    command = ["nmap", "-sS", "-A", "-Pn", ip, "-p-", "-oN", os.path.join(output_dir, "tcp.scan"), "-sC", "--min-rate=200"]
+    run_command(command, debug)
+
+    # set owner to regular user
+    subprocess.run(["chown", "-R", f"{original_uid}:{original_gid}", output_dir], check=True)
+
+    print(f"[+] TCP scan for {ip} finished.")
+
+# only top 1000 ports
+def tcp_scan_1000(ip, debug):
+    output_dir = os.path.abspath(ip)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"[*] Scanning {ip} top 1000 TCP ports...")
+    command = ["nmap", "-sS", "-A", "-Pn", ip, "-oN", os.path.join(output_dir, "tcp.scan"), "-sC", "--min-rate=200"]
+    run_command(command, debug)
+
+    # set owner to regular user
+    subprocess.run(["chown", "-R", f"{original_uid}:{original_gid}", output_dir], check=True)
+
+    print(f"[+] top 1000 TCP scan for {ip} finished.")
+
+def fast_udp_scan(ip, debug):
+    output_dir = os.path.abspath(ip)
+    os.makedirs(output_dir, exist_ok=True)
+    # distinct filename from udp_scan() for the same reason as tcp_fast.scan:
+    # both UDP scans run concurrently and must not share one output file.
+    command = ["nmap", "-sU", "-sV", "-Pn", ip, "-oN", os.path.join(output_dir, "udp_fast.scan"), "--top-ports=100"]
+    run_command(command, debug)
+
+    # set owner to regular user
+    subprocess.run(["chown", "-R", f"{original_uid}:{original_gid}", output_dir], check=True)
+
+    print(f"[+] Fast UDP scan for {ip} finished.")
+
+def udp_scan(ip, debug):
+    output_dir = os.path.abspath(ip)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"[*] Scanning {ip} with full UDP scan...")
+    command = ["nmap", "-sU", "-sV", "-Pn", ip, "-oN", os.path.join(output_dir, "udp.scan")]
+    run_command(command, debug)
+
+    # set owner to regular user
+    subprocess.run(["chown", "-R", f"{original_uid}:{original_gid}", output_dir], check=True)
+
+    print(f"[+] UDP scan for {ip} finished.")
+
+
+def main():
+    parser = ArgumentParser(description="Scan an IP range and optionally perform full scans on live hosts.")
+    parser.add_argument("ip_range", help="CIDR IP range (e.g. 192.168.221.0/24)")
+    parser.add_argument("--debug", action="store_true", help="Print full output of commands")
+    parser.add_argument("--internal", action="store_true", help="Careful scan for tunneling")
+
+    args = parser.parse_args()
+
+    # Calculate total usable hosts count in the subnet
+    try:
+        network = ipaddress.ip_network(args.ip_range, strict=False)
+        total_usable_hosts = len(list(network.hosts()))
+    except Exception as e:
+        print(f"[!] Invalid IP range: {e}")
+        sys.exit(1)
+
+    if args.internal:
+        # Use ping sweep logic to find hosts
+        live_hosts = find_live_hosts_ping(args.ip_range, threads=100, count=10, timeout=1, debug=args.debug)
+    else:
+        # Use nmap -sn to find hosts
+        live_hosts = find_live_hosts_nmap(args.ip_range, args.debug)
+        # Use a threshold (85%)
+        threshold = 0.85
+        if len(live_hosts) >= int(total_usable_hosts * threshold):
+            print(f"\n[!] {int((len(live_hosts) / total_usable_hosts) * 100)}% of hosts appear to be up")
+            print("[!] Consider using the --internal flag for careful scanning.\n")
+
+    if not live_hosts:
+        print("[-] No live hosts found.")
+        return
+
+    proceed = input("[?] Start full scans on all live hosts? (y/n): ").strip().lower()
+    if proceed != 'y':
+        print("[*] Exiting without scanning.")
+        return 
+
+    if args.internal:
+        for ip in live_hosts:
+            tcp_scan_1000(ip, args.debug)
+        for ip in live_hosts:
+            tcp_scan(ip, args.debug)
+    else:
+        threads = []
+        for ip in live_hosts:
+            t1 = threading.Thread(target=tcp_scan, args=(ip, args.debug))
+            t2 = threading.Thread(target=udp_scan, args=(ip, args.debug))
+            t3 = threading.Thread(target=fast_tcp_scan, args=(ip, args.debug))
+            t4 = threading.Thread(target=fast_udp_scan, args=(ip, args.debug))
+
+            t1.start()
+            t2.start()
+            t3.start()
+            t4.start()
+        
+            threads.append(t1)
+            threads.append(t2)
+            threads.append(t3)
+            threads.append(t4)
+
+        for t in threads:
+            t.join()
+
+    print("[+] All scans completed.")
+
+if __name__ == "__main__":
+    main()
+

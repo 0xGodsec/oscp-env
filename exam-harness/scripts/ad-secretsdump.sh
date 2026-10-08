@@ -41,6 +41,9 @@ mkdir -p "$OUT"
 log(){ echo -e "\n\033[1;34m[*] $1\033[0m"; }
 
 # Build impacket target string:  [domain/]user[:pass]@target   (+ -hashes for PtH)
+# '.' means "no domain / local account" (Windows .\user convention). Treat it as
+# empty and turn on -local-auth so the documented '-d .' hint actually works.
+[ "$DOMAIN" = "." ] && { DOMAIN=""; LOCAL=1; }
 PRE="$USER"; [ -n "$DOMAIN" ] && [ "$LOCAL" = 0 ] && PRE="$DOMAIN/$USER"
 IMPARGS=()
 if [ -n "$HASH" ]; then IMPARGS+=(-hashes ":$HASH"); TGT="${PRE}@${TARGET}"

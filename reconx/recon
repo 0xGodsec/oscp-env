@@ -68,9 +68,11 @@ fi
 [ -n "$WS" ] || { echo "[!] no workspace found. cd into a box dir (with notes.md), pass -w <dir>, or run setup_pentest_env."; exit 1; }
 
 echo "[*] ReconX  target=$TARGET  workspace=$WS"
-echo "[*] output -> $WS/scans/reconx/$TARGET/   |   notes -> $WS/notes.md"
+# --workspace runs a single host in FLAT mode: output lands in scans/reconx/
+# directly (no per-<ip> subdir), so point at that path, not .../$TARGET/.
+echo "[*] output -> $WS/scans/reconx/   |   notes -> $WS/notes.md"
 echo
 python3 "$RECONX" "$TARGET" --workspace "$WS" "$@"
 echo
-echo "[+] Done. Ranked per-host notes: $WS/scans/reconx/$TARGET/NOTES.md"
+echo "[+] Done. Ranked per-host notes: $WS/scans/reconx/NOTES.md"
 echo "[+] Merged summary into: $WS/notes.md  (open in Obsidian; feed md2pdf_reportgen for the report)"

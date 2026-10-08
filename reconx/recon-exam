@@ -187,6 +187,18 @@ def _shellish(cmd):
     return out
 
 
+def reconx_out_dir(ws):
+    """Where ReconX actually drops this host's output.
+
+    recon-exam runs ReconX one IP at a time with --workspace, so ReconX always
+    sees a single host and writes in FLAT mode - straight into
+    <ws>/scans/reconx/ with NO per-<ip> subdirectory. Every consumer here
+    (identity extraction, state load, background-scan logs) must read that same
+    flat path; an extra /<ip>/ level points at a directory ReconX never creates.
+    """
+    return os.path.join(ws, "scans", "reconx")
+
+
 # --------------------------------------------------------------------------- #
 #  Domain / hostname extraction from ReconX output
 # --------------------------------------------------------------------------- #
@@ -326,7 +338,7 @@ _SEV = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
 
 
 def load_state(ws, ip):
-    p = os.path.join(ws, "scans", "reconx", ip, ".reconx_state.json")
+    p = os.path.join(reconx_out_dir(ws), ".reconx_state.json")
     try:
         with open(p) as f:
             return json.load(f)
@@ -419,7 +431,7 @@ def launch_full_background(ip, ws, extra):
     """Fire a full -p- + UDP ReconX in the background (staged mode); --resume
     reuses the quick pass's work and just extends it. Notes refresh on finish."""
     full = [e for e in extra if e != "--quick"]
-    log = os.path.join(ws, "scans", "reconx", ip, "full_scan.log")
+    log = os.path.join(reconx_out_dir(ws), "full_scan.log")
     os.makedirs(os.path.dirname(log), exist_ok=True)
     cmd = [sys.executable, RECONX, ip, "--workspace", ws, "--resume"] + full
     lf = open(log, "a")
@@ -519,10 +531,10 @@ def main(argv):
         wsmap[ip] = ws
         log = None
         if args.parallel > 1 and not args.dry_run:
-            log = os.path.join(ws, "scans", "reconx", ip, "recon-exam_pass1.log")
+            log = os.path.join(reconx_out_dir(ws), "recon-exam_pass1.log")
             os.makedirs(os.path.dirname(log), exist_ok=True)
         run_reconx(ip, ws, pass1_extra, creds=None, dry=args.dry_run, log=log)
-        dom, fqdn, short = extract_identity(os.path.join(ws, "scans", "reconx", ip))
+        dom, fqdn, short = extract_identity(reconx_out_dir(ws))
         if args.domain:
             dom = dom or args.domain
         identities[ip] = (dom, fqdn, short)

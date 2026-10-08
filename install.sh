@@ -52,10 +52,16 @@ chmod +x "$REPO/reconx/recon" "$REPO/reconx/recon-exam" "$REPO/reconx/reconx.py"
 # --- 3. exam-harness scripts (rx.sh, proof.sh, …) on PATH via a wrapper dir ---
 if [ -d "$REPO/exam-harness/scripts" ]; then
   say "linking exam-harness scripts…"
-  for s in "$REPO/exam-harness/scripts/"*.sh; do
+  for s in "$REPO/exam-harness/scripts/"*; do
     [ -f "$s" ] || continue
+    # skip docs / caches — only link runnable scripts (.sh or extension-less)
+    case "$(basename "$s")" in *.md|*.txt|__pycache__*) continue ;; esac
+    cmd="$(basename "${s%.sh}")"
+    # don't shadow the ReconX launchers linked above (recon, recon-exam):
+    # exam-harness/scripts/recon.sh is a different, simpler tool.
+    case "$cmd" in recon|recon-exam) warn "skipping $cmd (would shadow the ReconX '$cmd' command)"; continue ;; esac
     chmod +x "$s" 2>/dev/null || true
-    sudo ln -sf "$s" "/usr/local/bin/$(basename "${s%.sh}")"
+    sudo ln -sf "$s" "/usr/local/bin/$cmd"
   done
 fi
 

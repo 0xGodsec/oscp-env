@@ -201,6 +201,10 @@ class Runner:
         self.resume = resume
         self.plan = []          # for --dry-run
         self.sem = None         # set once loop exists
+        # secrets to strip from any command persisted to disk (the resume-cache
+        # header). Populated in main() from args; keeps passwords/hashes out of
+        # the loot dir. Verbose/--dry-run still show the real command by design.
+        self.secrets = set()
         # flat=True drops the per-host directory level from every output path -
         # used in --workspace mode (exactly one host per run), so results land
         # directly under <workspace>/scans/reconx/ instead of a redundant
@@ -210,6 +214,14 @@ class Runner:
     def hostdir(self, host):
         """The per-host output base. Flat mode collapses it to outdir itself."""
         return self.outdir if self.flat else os.path.join(self.outdir, host)
+
+    def _mask(self, cmd):
+        """Redact known secrets (password/hash) from a command before it's
+        written to disk, so cached output headers never carry credentials."""
+        for sec in self.secrets:
+            if sec:
+                cmd = cmd.replace(sec, "***")
+        return cmd
 
     async def run(self, cmd, outfile=None, label=None, timeout=None):
         """Run a shell command, tee output to a file, return (rc, stdout+stderr)."""
@@ -233,7 +245,7 @@ class Runner:
                 # trusting whatever's on disk at this path.
                 if cached.startswith("# cmd:") and "\n\n" in cached:
                     header, rest = cached.split("\n\n", 1)
-                    if header[len("# cmd: "):] != cmd:
+                    if header[len("# cmd: "):] != self._mask(cmd):
                         stale = True
                     cached = rest
                 if not stale:
@@ -270,7 +282,7 @@ class Runner:
                     path = os.path.join(self.outdir, outfile)
                     os.makedirs(os.path.dirname(path), exist_ok=True)
                     with open(path, "w", errors="replace") as f:
-                        f.write(f"# cmd: {cmd}\n\n{text}")
+                        f.write(f"# cmd: {self._mask(cmd)}\n\n{text}")
                 return proc.returncode, text
             except FileNotFoundError:
                 bad(f"command not found: {cmd.split()[0]}")
@@ -3124,6 +3136,8 @@ async def amain(args):
     refresh_tools()
     runner = Runner(args.outdir, dry_run=args.dry_run,
                     timeout=args.timeout, verbose=args.verbose, resume=args.resume)
+    runner.secrets = {s for s in (getattr(args, "password", None),
+                                  getattr(args, "hash", None)) if s}
     runner.sem = asyncio.Semaphore(args.parallel)
 
     print(C.CY + BANNER + C.END)

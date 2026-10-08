@@ -8,8 +8,9 @@ if [ -z "$IP" ]; then echo "Usage: recon.sh <ip> [name]"; exit 1; fi
 OUT="${WORKDIR:-$KIT/targets}/$NAME/scans"
 mkdir -p "$OUT/nmap" "$OUT/web"
 echo "[*] Stage 1: full TCP port sweep..."
-nmap -p- --min-rate 2000 -T4 -Pn "$IP" -oN "$OUT/nmap/allports.txt" | tee /tmp/_allports
-PORTS=$(grep -oP '^\d+(?=/tcp)' /tmp/_allports | paste -sd, -)
+nmap -p- --min-rate 2000 -T4 -Pn "$IP" -oN "$OUT/nmap/allports.txt"
+# parse ports from the saved scan (no shared /tmp file -> safe for concurrent boxes)
+PORTS=$(grep -oP '^\d+(?=/tcp)' "$OUT/nmap/allports.txt" | paste -sd, -)
 if [ -z "$PORTS" ]; then echo "[!] No open ports found."; exit 0; fi
 echo "[*] Open: $PORTS"
 echo "[*] Stage 2: version + default scripts on open ports..."
