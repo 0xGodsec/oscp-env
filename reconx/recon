@@ -67,10 +67,20 @@ if [ -z "$WS" ]; then
 fi
 [ -n "$WS" ] || { echo "[!] no workspace found. cd into a box dir (with notes.md), pass -w <dir>, or run setup_pentest_env."; exit 1; }
 
+# A single-host --workspace run writes FLAT: output + NOTES.md land directly
+# under $WS/scans/reconx/ (reconx drops its own per-host subdir). Only a CIDR
+# target keeps the per-host <ip>/ level. Echo the path that will actually exist.
+if [[ "$TARGET" == */* ]]; then
+  OUT_DIR="$WS/scans/reconx"
+  NOTES_HINT="$WS/scans/reconx/<ip>/NOTES.md  (one per host in the range)"
+else
+  OUT_DIR="$WS/scans/reconx"
+  NOTES_HINT="$WS/scans/reconx/NOTES.md"
+fi
 echo "[*] ReconX  target=$TARGET  workspace=$WS"
-echo "[*] output -> $WS/scans/reconx/$TARGET/   |   notes -> $WS/notes.md"
+echo "[*] output -> $OUT_DIR/   |   notes -> $WS/notes.md"
 echo
 python3 "$RECONX" "$TARGET" --workspace "$WS" "$@"
 echo
-echo "[+] Done. Ranked per-host notes: $WS/scans/reconx/$TARGET/NOTES.md"
+echo "[+] Done. Ranked notes: $NOTES_HINT"
 echo "[+] Merged summary into: $WS/notes.md  (open in Obsidian; feed md2pdf_reportgen for the report)"
