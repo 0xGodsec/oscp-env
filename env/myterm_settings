@@ -3,9 +3,13 @@ export GOPATH=$HOME/go
 export PATH=/opt/bin:$GOPATH/bin:$GOROOT/bin:$PATH:$HOME/.local/bin
 
 alias rustscan='docker run -it --rm --name rustscan rustscan/rustscan'
-# -mindepth 1 excludes ~/Downloads itself (per-user via ~, not a hardcoded
-# /home/kali path that could rm -rf the wrong dir on a non-kali account).
-alias cleanDownloads="find ~/Downloads -mindepth 1 -not \( -name HTB.ovpn -or -name THM.ovpn \) -exec rm -rf '{}' ';'"
+# Clear ~/Downloads except the top-level VPN configs. -mindepth 1 excludes the
+# dir itself (per-user via ~, not a hardcoded /home/kali that could rm -rf the
+# wrong dir on a non-kali account); -maxdepth 1 deletes only top-level entries
+# so find never errors descending into a dir it just removed. (A VPN config
+# nested in a subdir is not preserved - keep HTB.ovpn/THM.ovpn directly in
+# ~/Downloads, which is the convention.)
+alias cleanDownloads="find ~/Downloads -mindepth 1 -maxdepth 1 -not \( -name HTB.ovpn -or -name THM.ovpn \) -exec rm -rf '{}' +"
 
 
 getFromMainMachine(){
@@ -78,7 +82,9 @@ bloodhound-docker() {
 # NON-interactive shells that source this file (scp/sftp/rsync, `bash -c ...`,
 # BASH_ENV), where they hang or abort the transfer/command - the classic
 # "output/exit in .bashrc breaks scp" footgun. ${UNDER_SCRIPT:-} is nounset-safe.
-if [ -z "${UNDER_SCRIPT:-}" ] && [[ $- == *i* ]] && [ -t 0 ] && [ -t 1 ]; then
+# The BASH_EXECUTION_STRING check also skips `bash -ic "cmd"` one-shots (which
+# are interactive + on a TTY but exist to run cmd, not to open a REPL).
+if [ -z "${UNDER_SCRIPT:-}" ] && [[ $- == *i* ]] && [ -z "${BASH_EXECUTION_STRING:-}" ] && [ -t 0 ] && [ -t 1 ]; then
     logdir=${HOME}/logs
     logfile=${logdir}/$(date +%F.%H-%M-%S).$$.log
 
