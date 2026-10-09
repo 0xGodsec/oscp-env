@@ -3,7 +3,9 @@ export GOPATH=$HOME/go
 export PATH=/opt/bin:$GOPATH/bin:$GOROOT/bin:$PATH:$HOME/.local/bin
 
 alias rustscan='docker run -it --rm --name rustscan rustscan/rustscan'
-alias cleanDownloads="find ~/Downloads -not \( -name HTB.ovpn -or -name THM.ovpn \) -not -path '/home/kali/Downloads' -exec rm -rf '{}' ';'"
+# -mindepth 1 excludes ~/Downloads itself (per-user via ~, not a hardcoded
+# /home/kali path that could rm -rf the wrong dir on a non-kali account).
+alias cleanDownloads="find ~/Downloads -mindepth 1 -not \( -name HTB.ovpn -or -name THM.ovpn \) -exec rm -rf '{}' ';'"
 
 
 getFromMainMachine(){
@@ -70,8 +72,13 @@ bloodhound-docker() {
 
 
 # Helper script by @sechurity
-# Create a log directory, a log file and start logging
-if [ -z "${UNDER_SCRIPT}" ]; then
+# Create a log directory, a log file and start logging.
+# Guard: only auto-start the logged (script) shell in an INTERACTIVE shell on a
+# real TTY. Without the $-/-t checks, `script -f` + `exit` below also fire in
+# NON-interactive shells that source this file (scp/sftp/rsync, `bash -c ...`,
+# BASH_ENV), where they hang or abort the transfer/command - the classic
+# "output/exit in .bashrc breaks scp" footgun. ${UNDER_SCRIPT:-} is nounset-safe.
+if [ -z "${UNDER_SCRIPT:-}" ] && [[ $- == *i* ]] && [ -t 0 ] && [ -t 1 ]; then
     logdir=${HOME}/logs
     logfile=${logdir}/$(date +%F.%H-%M-%S).$$.log
 
