@@ -7,13 +7,27 @@ or external tools, so they can be asserted directly.
 
 Run:  cd reconx && python3 -m pytest -q
 """
+import importlib.machinery
+import importlib.util
+import json
 import os
+import tempfile
 import types
 
 import pytest
 
 import reconx
 import reconx_notes
+
+
+def _load_recon_exam():
+    """recon-exam has no .py extension, so load it by path for testing."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recon-exam")
+    loader = importlib.machinery.SourceFileLoader("recon_exam", path)
+    spec = importlib.util.spec_from_loader("recon_exam", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
 
 
 def _args(**kw):
@@ -50,6 +64,21 @@ class TestParsing:
         assert set(svc) == {22, 445}
         assert svc[22] == {"name": "ssh", "version": "OpenSSH 8.2"}
         assert svc[445] == {"name": "microsoft-ds", "version": ""}
+
+    def test_nmap_udp_open_and_open_filtered(self):
+        # "open|filtered" (the common UDP state, incl. real SNMP/TFTP) must not
+        # be dropped - regression for the old `\s+open\s+` parser.
+        out = (
+            "PORT    STATE         SERVICE\n"
+            "161/udp open          snmp\n"
+            "69/udp  open|filtered tftp\n"
+            "53/udp  closed        domain\n"
+        )
+        udp = reconx.parse_nmap_udp(out)
+        assert set(udp) == {161, 69}
+        assert udp[161] == "snmp"                     # confirmed open: bare name
+        assert udp[69] == "tftp (open|filtered)"      # uncertain: labelled
+        assert 53 not in udp                          # closed: dropped
 
 
 # --------------------------------------------------------------------------- #
@@ -354,6 +383,44 @@ class TestVhostFuzzing:
                 "Found: admin.ghostlink.htb (Status: 200)\n")
         assert reconx._parse_gobuster_vhosts(text) == [
             "dev.ghostlink.htb", "admin.ghostlink.htb"]
+
+
+# --------------------------------------------------------------------------- #
+# recon-exam reads ReconX's FLAT --workspace layout (regression: it used to
+# read <ws>/scans/reconx/<ip>/, which ReconX never creates in flat mode, so
+# domain detection + triage silently found nothing and Pass 2 never ran).
+# --------------------------------------------------------------------------- #
+class TestReconExamFlatPaths:
+    def _flat_ws(self):
+        rx = _load_recon_exam()
+        ip = "10.129.58.62"
+        ws = tempfile.mkdtemp()
+        flat = os.path.join(ws, "scans", "reconx")   # NO per-ip subdir (flat mode)
+        os.makedirs(flat)
+        with open(os.path.join(flat, ".reconx_state.json"), "w") as f:
+            json.dump({"target": ip, "ports": [88, 389, 445],
+                       "findings": [["HIGH", "ad", 88, "Kerberos open"]]}, f)
+        with open(os.path.join(flat, "smb_nxc.txt"), "w") as f:
+            f.write("SMB 10.129.58.62 445 DC01 (name:DC01) (domain:ghostlink.htb) (DC:True)\n")
+        return rx, ws, ip, flat
+
+    def test_reconx_out_has_no_ip_segment(self):
+        rx, ws, ip, flat = self._flat_ws()
+        assert rx.reconx_out(ws) == flat
+        assert not rx.reconx_out(ws).endswith(ip)
+
+    def test_load_state_reads_flat_layout(self):
+        rx, ws, ip, _ = self._flat_ws()
+        st = rx.load_state(ws, ip)
+        assert st.get("ports") == [88, 389, 445]      # empty {} before the fix
+        assert st.get("findings")
+
+    def test_identity_and_triage_populated(self):
+        rx, ws, ip, _ = self._flat_ws()
+        dom, fqdn, short = rx.extract_identity(rx.reconx_out(ws))
+        assert dom == "ghostlink.htb"                 # None before the fix -> Pass 2 skipped
+        assert short == "dc01"
+        assert rx.classify_box(rx.load_state(ws, ip), dom) == "ad"
 
 
 # --------------------------------------------------------------------------- #

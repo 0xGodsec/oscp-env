@@ -855,11 +855,21 @@ async def udp_scan(host, runner, args):
                                label="nmap-udp", timeout=args.scan_timeout)
     if runner.dry_run:
         return {}
+    return parse_nmap_udp(out)
+
+
+def parse_nmap_udp(text):
+    """Parse open UDP ports from nmap -sU normal output. UDP ports frequently
+    report 'open|filtered' (no response = can't distinguish open from filtered),
+    which includes real SNMP/TFTP/etc. The earlier `\\s+open\\s+` match dropped
+    every such line; capture both states and label the uncertain one so it's not
+    mistaken for a confirmed-open port."""
     udp = {}
-    for line in out.splitlines():
-        m = re.match(r"^(\d+)/udp\s+open\s+(\S+)", line)
+    for line in (text or "").splitlines():
+        m = re.match(r"^(\d+)/udp\s+(open\|filtered|open)\s+(\S+)", line)
         if m:
-            udp[int(m.group(1))] = m.group(2)
+            name = m.group(3)
+            udp[int(m.group(1))] = name if m.group(2) == "open" else f"{name} (open|filtered)"
     return udp
 
 
@@ -1619,7 +1629,17 @@ async def enum_ssh(host, port, runner, args, findings):
     good("ssh enum done")
 
 
+# SNMP is reachable both as 161/tcp (rare) and 161/udp (the common case), so
+# enum_snmp can be triggered from the TCP dispatcher and from the UDP scan.
+# Guard so a host that shows both doesn't get walked twice. (asyncio is
+# cooperative - the check+add below is race-free with no await between them.)
+_SNMP_DONE = set()
+
+
 async def enum_snmp(host, runner, args, findings):
+    if host in _SNMP_DONE:
+        return
+    _SNMP_DONE.add(host)
     tag = f"{host}/snmp"
     if TOOLS.get("onesixtyone"):
         rc, out = await runner.run(f"onesixtyone {host} public private community",
@@ -2448,6 +2468,12 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port == 2049 or "nfs" in name:
             queue.add_job(Job(f"{host}:nfs", prio("nfs"), background=False,
                 coro_factory=functools.partial(enum_nfs, host, runner, args, findings)))
+        elif port == 161 or "snmp" in name:
+            # 161/tcp is rare (SNMP is usually UDP - the UDP scan triggers the
+            # same enum_snmp, deduped by the _SNMP_DONE guard), but when it's
+            # open over TCP, enumerate it here too.
+            queue.add_job(Job(f"{host}:snmp", prio("snmp"), background=False,
+                coro_factory=functools.partial(enum_snmp, host, runner, args, findings)))
         elif port == 1433 or "ms-sql" in name or "mssql" in name:
             queue.add_job(Job(f"{host}:mssql:{port}", prio("mssql"), background=False,
                 coro_factory=functools.partial(enum_mssql, host, port, runner, args, findings)))
@@ -2817,7 +2843,10 @@ async def job_discover(host, runner, args, queue, findings, host_profile, host_s
     if not ports:
         warn(f"{host}: no open TCP ports found (host down / filtered / try --no-rustscan)")
         return ports
-    good(f"{host}: {len(ports)} open port(s): {', '.join(map(str, ports))}")
+    # In --dry-run the ports are a fixed sample (no scan ran), so label them as
+    # such - otherwise the line reads exactly like a real scan result (F3).
+    sample_tag = "  (sample - dry-run, no scan ran)" if runner.dry_run else ""
+    good(f"{host}: {len(ports)} open port(s): {', '.join(map(str, ports))}{sample_tag}")
 
     # guess pass: fast opportunistic modules start now, without waiting on nmap
     guessed = {p: {"name": guess_service(p), "version": ""} for p in ports}
@@ -2827,7 +2856,7 @@ async def job_discover(host, runner, args, queue, findings, host_profile, host_s
         coro_factory=functools.partial(job_service_scan, host, ports, runner, args,
                                         queue, findings, host_profile, host_state, state_store)))
     queue.add_job(Job(f"{host}:udp_scan", PRIO_SCAN, background=True,
-        coro_factory=functools.partial(job_udp_scan, host, runner, args, host_state, state_store)))
+        coro_factory=functools.partial(job_udp_scan, host, runner, args, host_state, state_store, findings)))
     if args.mode == "deep" and TOOLS.get("nmap"):
         queue.add_job(Job(f"{host}:vuln_scan", PRIO_BACKGROUND, background=True,
             coro_factory=functools.partial(job_vuln_scan, host, ports, runner, args, findings)))
@@ -2855,11 +2884,17 @@ async def job_service_scan(host, ports, runner, args, queue, findings, host_prof
     return services
 
 
-async def job_udp_scan(host, runner, args, host_state, state_store):
+async def job_udp_scan(host, runner, args, host_state, state_store, findings=None):
     udp = await udp_scan(host, runner, args)
     host_state["udp"] = udp
     if state_store:
         await state_store.save_ports_services(udp=udp)
+    # SNMP is almost always UDP, and the TCP dispatcher never sees it - so the
+    # UDP scan is what actually triggers SNMP enumeration (community-string
+    # sweep + walk). Run it inline here (deduped per host via _SNMP_DONE) rather
+    # than queueing a new job from a background task near queue shutdown.
+    if findings is not None and 161 in udp:
+        await enum_snmp(host, runner, args, findings)
     return udp
 
 

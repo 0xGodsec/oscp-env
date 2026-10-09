@@ -325,8 +325,18 @@ def update_etc_hosts(lines, project, assume_yes=False, dry=False):
 _SEV = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
 
 
+def reconx_out(ws):
+    """Where ReconX actually writes for a `--workspace WS` run. recon-exam
+    invokes ReconX one host at a time, so ReconX runs in *flat* mode and drops
+    its own per-host <ip> subdir: output lands directly under <ws>/scans/reconx/
+    (not <ws>/scans/reconx/<ip>/). recon-exam must read from the SAME path -
+    reading the extra <ip> level found nothing, so domain detection silently
+    failed (-> Pass 2 never ran) and the triage dashboard was always empty."""
+    return os.path.join(ws, "scans", "reconx")
+
+
 def load_state(ws, ip):
-    p = os.path.join(ws, "scans", "reconx", ip, ".reconx_state.json")
+    p = os.path.join(reconx_out(ws), ".reconx_state.json")
     try:
         with open(p) as f:
             return json.load(f)
@@ -419,7 +429,7 @@ def launch_full_background(ip, ws, extra):
     """Fire a full -p- + UDP ReconX in the background (staged mode); --resume
     reuses the quick pass's work and just extends it. Notes refresh on finish."""
     full = [e for e in extra if e != "--quick"]
-    log = os.path.join(ws, "scans", "reconx", ip, "full_scan.log")
+    log = os.path.join(reconx_out(ws), "full_scan.log")
     os.makedirs(os.path.dirname(log), exist_ok=True)
     cmd = [sys.executable, RECONX, ip, "--workspace", ws, "--resume"] + full
     lf = open(log, "a")
@@ -519,10 +529,10 @@ def main(argv):
         wsmap[ip] = ws
         log = None
         if args.parallel > 1 and not args.dry_run:
-            log = os.path.join(ws, "scans", "reconx", ip, "recon-exam_pass1.log")
+            log = os.path.join(reconx_out(ws), "recon-exam_pass1.log")
             os.makedirs(os.path.dirname(log), exist_ok=True)
         run_reconx(ip, ws, pass1_extra, creds=None, dry=args.dry_run, log=log)
-        dom, fqdn, short = extract_identity(os.path.join(ws, "scans", "reconx", ip))
+        dom, fqdn, short = extract_identity(reconx_out(ws))
         if args.domain:
             dom = dom or args.domain
         identities[ip] = (dom, fqdn, short)
