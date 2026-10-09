@@ -12,7 +12,11 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   ./rx.sh box1 10.10.10.10 --quick              # fast top-1000
 #   ./rx.sh dc01 192.168.120.5 -u alex -p 'Pw!' -d corp.htb --bloodhound  # authed AD
 #   ./rx.sh net  192.168.120.0/24 --ping-sweep    # sweep a subnet
-RECONX="$KIT/../Tools/reconx/reconx.py"
+# reconx.py lives in the oscp-env repo at ../reconx/ (the old PakCyberbot
+# "Tools/reconx" layout no longer applies); fall back to it if someone still
+# has the legacy tree.
+RECONX="$KIT/../reconx/reconx.py"
+[ -f "$RECONX" ] || RECONX="$KIT/../Tools/reconx/reconx.py"
 NAME="$1"; TARGET="$2"; shift 2 2>/dev/null
 [ -z "$NAME" ] || [ -z "$TARGET" ] && { echo "Usage: rx.sh <name> <target> [reconx flags...]"; exit 1; }
 [ -f "$RECONX" ] || { echo "[!] reconx not found at $RECONX"; exit 1; }

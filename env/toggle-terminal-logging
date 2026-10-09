@@ -3,11 +3,16 @@
 ZSHRC="$HOME/.myterm_settings"
 MARKER="# Helper script by @sechurity"
 
-# The script block to be toggled
+# The script block to be toggled. MUST stay in sync with the guarded copy in
+# env/myterm_settings: only auto-start the logged (script) shell in an
+# INTERACTIVE shell on a real TTY that is not a `bash -ic "cmd"` one-shot.
+# Without the guard, `script -f` + `exit` also fire in non-interactive shells
+# that source this file (scp/sftp/rsync, `bash -c`, BASH_EXECUTION_STRING) and
+# hang/abort them - the classic ".bashrc breaks scp" footgun.
 read -r -d '' SCRIPT_BLOCK <<'EOF'
 # Helper script by @sechurity
-# Create a log directory, a log file and start logging
-if [ -z "${UNDER_SCRIPT}" ]; then
+# Create a log directory, a log file and start logging (interactive TTY only).
+if [ -z "${UNDER_SCRIPT:-}" ] && [[ $- == *i* ]] && [ -z "${BASH_EXECUTION_STRING:-}" ] && [ -t 0 ] && [ -t 1 ]; then
     logdir=${HOME}/logs
     logfile=${logdir}/$(date +%F.%H-%M-%S).$$.log
 

@@ -126,12 +126,20 @@ class FindingsList(list):
     NOTES.md - findings, unlike command output, only ever live in memory
     otherwise."""
 
-    def __init__(self, *a, state_store=None, **kw):
+    def __init__(self, *a, state_store=None, dry_run=False, **kw):
         super().__init__(*a, **kw)
         self._seen = set()
         self._state_store = state_store
+        self._dry_run = dry_run
 
     def append(self, finding):
+        # --dry-run runs no commands, so every module sees the rc=0/empty stub
+        # from Runner.run - which makes rc-gated checks (e.g. enum_ftp's
+        # "curl exited 0 => anonymous login") falsely fire. The command plan is
+        # the only intended dry-run output, so suppress finding emission entirely
+        # rather than print proof-less findings.
+        if self._dry_run:
+            return
         key = (finding.sev, finding.service, finding.port, finding.text)
         if key in self._seen:
             return
@@ -179,6 +187,55 @@ def _first_tool(*candidates):
         if TOOLS.get(cand):
             return cand
     return None
+
+
+# Capability groups for the startup "tools available / missing" summary. Each
+# capability is satisfied by ANY one of its candidate binaries (aliases): e.g.
+# netexec counts as present if nxc OR netexec OR crackmapexec is installed, and
+# the web dir-brute capability if feroxbuster OR gobuster OR ffuf is. Derived
+# from the full TOOLS table (not a hardcoded subset) so the summary can't
+# silently hide a missing capability - the headline "flags missing tools"
+# guarantee only holds if every capability a module relies on is reported.
+CAPABILITY_GROUPS = [
+    ("rustscan",         ["rustscan"]),
+    ("nmap",             ["nmap"]),
+    ("netexec",          ["nxc", "netexec", "crackmapexec"]),
+    ("smbclient",        ["smbclient"]),
+    ("rpcclient",        ["rpcclient"]),
+    ("enum4linux",       ["enum4linux-ng", "enum4linux"]),
+    ("ldapsearch",       ["ldapsearch"]),
+    ("GetUserSPNs",      ["impacket-GetUserSPNs", "GetUserSPNs.py"]),
+    ("GetNPUsers",       ["impacket-GetNPUsers", "GetNPUsers.py"]),
+    ("bloodhound-python", ["bloodhound-python", "bloodhound-ce-python"]),
+    ("snmpwalk",         ["snmpwalk"]),
+    ("onesixtyone",      ["onesixtyone"]),
+    ("showmount",        ["showmount"]),
+    ("dig",              ["dig"]),
+    ("smtp-user-enum",   ["smtp-user-enum"]),
+    ("redis-cli",        ["redis-cli"]),
+    ("psql",             ["psql"]),
+    ("mysql",            ["mysql", "mariadb"]),
+    ("searchsploit",     ["searchsploit"]),
+    ("whatweb",          ["whatweb"]),
+    ("dir-brute",        ["feroxbuster", "gobuster", "ffuf"]),
+    ("nikto",            ["nikto"]),
+    ("curl",             ["curl"]),
+    ("openssl",          ["openssl"]),
+    ("nc",               ["ncat", "nc"]),
+]
+
+
+def tool_availability():
+    """(present, missing) capability-label lists for the startup summary, built
+    from the full TOOLS table. A capability is present if ANY alias binary is
+    installed (its found name is shown); missing if none are. Replaces the old
+    hardcoded subset lists that reported ~10 tools and hid the rest, so a box
+    missing e.g. ldapsearch / searchsploit / the dir-brute tools now says so."""
+    present, missing = [], []
+    for label, candidates in CAPABILITY_GROUPS:
+        found = next((c for c in candidates if TOOLS.get(c)), None)
+        (present.append(found) if found else missing.append(label))
+    return present, missing
 
 
 def _first_existing_file(candidates):
@@ -798,11 +855,21 @@ async def udp_scan(host, runner, args):
                                label="nmap-udp", timeout=args.scan_timeout)
     if runner.dry_run:
         return {}
+    return parse_nmap_udp(out)
+
+
+def parse_nmap_udp(text):
+    """Parse open UDP ports from nmap -sU normal output. UDP ports frequently
+    report 'open|filtered' (no response = can't distinguish open from filtered),
+    which includes real SNMP/TFTP/etc. The earlier `\\s+open\\s+` match dropped
+    every such line; capture both states and label the uncertain one so it's not
+    mistaken for a confirmed-open port."""
     udp = {}
-    for line in out.splitlines():
-        m = re.match(r"^(\d+)/udp\s+open\s+(\S+)", line)
+    for line in (text or "").splitlines():
+        m = re.match(r"^(\d+)/udp\s+(open\|filtered|open)\s+(\S+)", line)
         if m:
-            udp[int(m.group(1))] = m.group(2)
+            name = m.group(3)
+            udp[int(m.group(1))] = name if m.group(2) == "open" else f"{name} (open|filtered)"
     return udp
 
 
@@ -1562,7 +1629,17 @@ async def enum_ssh(host, port, runner, args, findings):
     good("ssh enum done")
 
 
+# SNMP is reachable both as 161/tcp (rare) and 161/udp (the common case), so
+# enum_snmp can be triggered from the TCP dispatcher and from the UDP scan.
+# Guard so a host that shows both doesn't get walked twice. (asyncio is
+# cooperative - the check+add below is race-free with no await between them.)
+_SNMP_DONE = set()
+
+
 async def enum_snmp(host, runner, args, findings):
+    if host in _SNMP_DONE:
+        return
+    _SNMP_DONE.add(host)
     tag = f"{host}/snmp"
     if TOOLS.get("onesixtyone"):
         rc, out = await runner.run(f"onesixtyone {host} public private community",
@@ -1984,6 +2061,152 @@ _WEB_WORDLISTS = [
 def _web_wordlist():
     return _first_existing_file(_WEB_WORDLISTS)
 
+
+# DNS/vhost name lists for virtual-host fuzzing (--web). Smaller than the dir
+# lists on purpose: vhost fuzzing fires one request per name against the live
+# host, so a 5k list is the right order of magnitude for an exam box.
+_VHOST_WORDLISTS = [
+    "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+    "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
+    "/usr/share/seclists/Discovery/DNS/namelist.txt",
+    "/usr/share/wordlists/amass/subdomains-top1mil-5000.txt",
+    "/usr/share/wordlists/dnsmap.txt",
+]
+def _vhost_wordlist():
+    return _first_existing_file(_VHOST_WORDLISTS)
+
+
+def _is_ipv4(s):
+    """True for a dotted-quad like 10.129.58.62 (so we don't try to fuzz
+    FUZZ.<ip>, which is meaningless)."""
+    parts = (s or "").split(".")
+    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _registrable_domain(hostname):
+    """Reduce a hostname to the base domain we append FUZZ. to: the last two
+    labels (ghostlink.htb, www.ghostlink.htb -> ghostlink.htb). Returns None
+    for an IP or a single-label/empty name. Good enough for lab TLDs
+    (.htb/.local/.thm/...); multi-part public suffixes like co.uk aren't a
+    concern on exam/lab targets and are documented as a known limitation."""
+    if not hostname or _is_ipv4(hostname):
+        return None
+    labels = [l for l in hostname.strip().strip(".").lower().split(".") if l]
+    if len(labels) < 2:
+        return None
+    return ".".join(labels[-2:])
+
+
+_VHOST_REDIRECT_RX = re.compile(r"^location:\s*https?://([A-Za-z0-9.-]+)", re.I | re.M)
+
+
+def _vhost_base_domain(host, args, root_out):
+    """Pick the domain to vhost-fuzz, in priority order:
+      1. an explicit -d/--domain,
+      2. the target itself when it's a hostname (reconx ghostlink.htb),
+      3. a hostname from the root page's redirect Location (the common HTB
+         'IP 302s to ghostlink.htb' lead).
+    Returns (domain, redirect_host_or_None); domain is None if nothing usable
+    resolves (e.g. a bare-IP target that doesn't redirect to a name)."""
+    for cand in (getattr(args, "domain", None), host):
+        dom = _registrable_domain(cand)
+        if dom:
+            return dom, None
+    m = _VHOST_REDIRECT_RX.search(root_out or "")
+    if m and not _is_ipv4(m.group(1)):
+        return _registrable_domain(m.group(1)), m.group(1)
+    return None, None
+
+
+def _parse_ffuf_vhosts(text, domain, limit=25):
+    """ffuf -s prints just the matched FUZZ keyword, one per line (nothing
+    else), so each clean label becomes <label>.<domain>. Version-stable and
+    free of JSON input-encoding quirks."""
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        label = line.strip()
+        if label and re.fullmatch(r"[A-Za-z0-9_-]+", label) and label not in seen:
+            seen.add(label)
+            out.append(f"{label}.{domain}")
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _parse_gobuster_vhosts(text, limit=25):
+    """gobuster vhost prints 'Found: name.domain Status: 200 [Size: N]'."""
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        m = re.search(r"Found:\s*([A-Za-z0-9._-]+)", line)
+        if m and m.group(1) not in seen:
+            seen.add(m.group(1))
+            out.append(m.group(1))
+            if len(out) >= limit:
+                break
+    return out
+
+
+# vhost fuzzing is per-host, not per-web-port: this guards against the N web
+# ports on one host each kicking off a (slow) fuzz. asyncio is cooperative, so
+# the check+add below is race-free as long as nothing awaits between them.
+_VHOST_FUZZED = set()
+
+
+async def enum_vhosts(host, port, scheme, url, runner, args, findings, root_out, cap):
+    """Virtual-host discovery for the --web deep pass. Resolves a base domain,
+    then fuzzes Host: FUZZ.<domain> with ffuf -ac (auto-calibrated, so the
+    default/wildcard response is filtered) or gobuster vhost. Each hit is a
+    HIGH finding naming the vhost to add to /etc/hosts. Runs at most once per
+    host; degrades to a single INFO when it can't run."""
+    if host in _VHOST_FUZZED:
+        return
+    _VHOST_FUZZED.add(host)
+
+    domain, redirect_host = _vhost_base_domain(host, args, root_out)
+    if redirect_host:
+        findings.append(Finding("HIGH", "http", port,
+            f"Root redirects to '{redirect_host}' - add '{host} {redirect_host}' to "
+            f"/etc/hosts and re-browse (name-based vhost)"))
+    if not domain:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped on {url} - no base domain; pass -d <domain> "
+            f"(or add a discovered vhost to /etc/hosts) and re-run --web"))
+        return
+
+    wl = _vhost_wordlist()
+    if not wl:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped - no DNS wordlist found (seclists subdomains-top1million-*); "
+            f"install seclists or fuzz Host: FUZZ.{domain} manually"))
+        return
+
+    vhosts = []
+    if TOOLS.get("ffuf"):
+        # -ac auto-calibrates against the base response so unknown vhosts (which
+        # return the default page) are filtered; -s prints only matched labels.
+        cmd = (f"ffuf -u {scheme}://{host}:{port}/ -H {shlex.quote('Host: FUZZ.' + domain)} "
+               f"-w {shlex.quote(wl)} -t 40 -k -ac -s -maxtime {cap}")
+        rc, out = await runner.run(cmd, f"{host}/web_{port}/ffuf_vhost.txt",
+                                   "ffuf-vhost", timeout=cap + 30)
+        vhosts = _parse_ffuf_vhosts(out, domain)
+    elif TOOLS.get("gobuster"):
+        cmd = (f"gobuster vhost -u {scheme}://{host}:{port} --domain {shlex.quote(domain)} "
+               f"--append-domain -w {shlex.quote(wl)} -q -k -t 40")
+        rc, out = await runner.run(cmd, f"{host}/web_{port}/gobuster_vhost.txt",
+                                   "gobuster-vhost", timeout=cap + 30)
+        vhosts = _parse_gobuster_vhosts(out)
+    else:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped - no ffuf/gobuster; fuzz Host: FUZZ.{domain} manually"))
+        return
+
+    for vh in vhosts:
+        findings.append(Finding("HIGH", "http", port,
+            f"virtual host: {vh} - add '{host} {vh}' to /etc/hosts and browse {scheme}://{vh}:{port}"))
+    if not vhosts:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz on {domain} found nothing new (auto-calibrated) - try a larger DNS list"))
+
 # high-value paths worth pulling straight into the ranked findings
 _WEB_JUICY = re.compile(
     r"(\.git|\.svn|\.env|\.htpasswd|/backup|\.bak|\.old|\.sql|/upload|"
@@ -1998,6 +2221,24 @@ def _web_scheme(port, name):
     if port in _HTTPS_PORTS or "https" in n or "ssl" in n:
         return "https"
     return "http"
+
+
+def _ffuf_json_to_lines(text):
+    """Convert ffuf JSON (-of json) into feroxbuster-style 'STATUS GET URL'
+    lines so the existing _web_paths_to_findings parser handles ffuf output the
+    same way it handles feroxbuster/gobuster - no second parser to keep in sync.
+    Tolerant of malformed/empty input (returns '')."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return ""
+    lines = []
+    for r in (data.get("results") or []):
+        url = r.get("url") or ""
+        status = r.get("status")
+        if url and status:
+            lines.append(f"{status} GET {url}")
+    return "\n".join(lines)
 
 
 def _web_paths_to_findings(text, host, port, findings, limit=12):
@@ -2048,9 +2289,11 @@ async def enum_http(host, port, runner, args, findings):
         m = re.search(r"Title\[([^\]]+)\]", out or "")
         if m:
             findings.append(Finding("INFO", "http", port, f"Web title: {m.group(1).strip()[:80]}"))
+    root_out = ""
     if TOOLS.get("curl"):
         rc, out = await runner.run(
             f"curl -sSik --max-time 15 {url}/", f"{tag}/curl_root.txt", "curl-root", timeout=25)
+        root_out = out or ""
         scan_findings(out, "http", port, findings)
 
     if not deep:
@@ -2073,14 +2316,35 @@ async def enum_http(host, port, runner, args, findings):
         cmd = (f"gobuster dir -u {url} -w {shlex.quote(wl)} -q -k -t 50 --no-error")
         rc, out = await runner.run(cmd, f"{tag}/gobuster.txt", "gobuster", timeout=cap + 30)
         _web_paths_to_findings(out, host, port, findings)
+    elif wl and TOOLS.get("ffuf"):
+        # ffuf has no feroxbuster/gobuster-style stdout, so write JSON and parse
+        # that via _ffuf_json_to_lines. Path mirrors Runner.run's outfile mapping
+        # (flat mode strips the leading host segment) so it lands beside the
+        # other web output. In --dry-run no file is written -> the read just
+        # no-ops, consistent with dry-run emitting no findings.
+        rel = f"{tag}/ffuf.json"
+        if runner.flat and "/" in rel:
+            rel = rel.split("/", 1)[1]
+        jpath = os.path.join(runner.outdir, rel)
+        cmd = (f"ffuf -u {url}/FUZZ -w {shlex.quote(wl)} -t 50 -k -s "
+               f"-mc 200,204,301,302,307,401,403 -of json -o {shlex.quote(jpath)}")
+        await runner.run(cmd, f"{tag}/ffuf_stdout.txt", "ffuf", timeout=cap + 30)
+        try:
+            with open(jpath, errors="replace") as fh:
+                _web_paths_to_findings(_ffuf_json_to_lines(fh.read()), host, port, findings)
+        except OSError:
+            pass
     else:
         findings.append(Finding("INFO", "http", port,
-            f"Web on {url} - no feroxbuster/gobuster+wordlist found; run your own dir brute"))
+            f"Web on {url} - no feroxbuster/gobuster/ffuf+wordlist found; run your own dir brute"))
     if TOOLS.get("nikto"):
         rc, out = await runner.run(
             f"nikto -h {url} -maxtime {cap}s -ask no -nointeractive",
             f"{tag}/nikto.txt", "nikto", timeout=cap + 30)
         scan_findings(out, "http", port, findings)
+    # virtual-host discovery (once per host; see enum_vhosts) - a web box often
+    # gates its real app behind a name-based vhost that must be in /etc/hosts.
+    await enum_vhosts(host, port, scheme, url, runner, args, findings, root_out, cap)
     good(f"web enum ({url}) done")
 
 
@@ -2204,6 +2468,12 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port == 2049 or "nfs" in name:
             queue.add_job(Job(f"{host}:nfs", prio("nfs"), background=False,
                 coro_factory=functools.partial(enum_nfs, host, runner, args, findings)))
+        elif port == 161 or "snmp" in name:
+            # 161/tcp is rare (SNMP is usually UDP - the UDP scan triggers the
+            # same enum_snmp, deduped by the _SNMP_DONE guard), but when it's
+            # open over TCP, enumerate it here too.
+            queue.add_job(Job(f"{host}:snmp", prio("snmp"), background=False,
+                coro_factory=functools.partial(enum_snmp, host, runner, args, findings)))
         elif port == 1433 or "ms-sql" in name or "mssql" in name:
             queue.add_job(Job(f"{host}:mssql:{port}", prio("mssql"), background=False,
                 coro_factory=functools.partial(enum_mssql, host, port, runner, args, findings)))
@@ -2573,7 +2843,10 @@ async def job_discover(host, runner, args, queue, findings, host_profile, host_s
     if not ports:
         warn(f"{host}: no open TCP ports found (host down / filtered / try --no-rustscan)")
         return ports
-    good(f"{host}: {len(ports)} open port(s): {', '.join(map(str, ports))}")
+    # In --dry-run the ports are a fixed sample (no scan ran), so label them as
+    # such - otherwise the line reads exactly like a real scan result (F3).
+    sample_tag = "  (sample - dry-run, no scan ran)" if runner.dry_run else ""
+    good(f"{host}: {len(ports)} open port(s): {', '.join(map(str, ports))}{sample_tag}")
 
     # guess pass: fast opportunistic modules start now, without waiting on nmap
     guessed = {p: {"name": guess_service(p), "version": ""} for p in ports}
@@ -2583,7 +2856,7 @@ async def job_discover(host, runner, args, queue, findings, host_profile, host_s
         coro_factory=functools.partial(job_service_scan, host, ports, runner, args,
                                         queue, findings, host_profile, host_state, state_store)))
     queue.add_job(Job(f"{host}:udp_scan", PRIO_SCAN, background=True,
-        coro_factory=functools.partial(job_udp_scan, host, runner, args, host_state, state_store)))
+        coro_factory=functools.partial(job_udp_scan, host, runner, args, host_state, state_store, findings)))
     if args.mode == "deep" and TOOLS.get("nmap"):
         queue.add_job(Job(f"{host}:vuln_scan", PRIO_BACKGROUND, background=True,
             coro_factory=functools.partial(job_vuln_scan, host, ports, runner, args, findings)))
@@ -2611,11 +2884,17 @@ async def job_service_scan(host, ports, runner, args, queue, findings, host_prof
     return services
 
 
-async def job_udp_scan(host, runner, args, host_state, state_store):
+async def job_udp_scan(host, runner, args, host_state, state_store, findings=None):
     udp = await udp_scan(host, runner, args)
     host_state["udp"] = udp
     if state_store:
         await state_store.save_ports_services(udp=udp)
+    # SNMP is almost always UDP, and the TCP dispatcher never sees it - so the
+    # UDP scan is what actually triggers SNMP enumeration (community-string
+    # sweep + walk). Run it inline here (deduped per host via _SNMP_DONE) rather
+    # than queueing a new job from a background task near queue shutdown.
+    if findings is not None and 161 in udp:
+        await enum_snmp(host, runner, args, findings)
     return udp
 
 
@@ -2668,7 +2947,7 @@ async def scan_host(host, runner, args):
         state_store.data["started_at"] = state_store.data.get("started_at") or \
             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    findings = FindingsList(state_store=state_store)
+    findings = FindingsList(state_store=state_store, dry_run=runner.dry_run)
     if args.resume and state_store and state_store.data.get("findings"):
         for sev, svc, port, text in state_store.data["findings"]:
             findings.seed(Finding(sev, svc, port, text))
@@ -2898,7 +3177,11 @@ WEB ENUMERATION
                             web-port probe if there's no cache), skip every
                             non-web module, and run the deep pass on each web
                             port - directory brute (feroxbuster, else
-                            gobuster) + nikto. No second full port scan.
+                            gobuster, else ffuf) + nikto, plus once-per-host
+                            virtual-host fuzzing (ffuf -ac / gobuster vhost
+                            against Host: FUZZ.<domain>, domain from -d, a
+                            hostname target, or a root redirect). No second
+                            full port scan.
     --no-web                skip web enumeration entirely (not even the
                             fingerprint)
     --web-timeout SECONDS   max seconds for the per-web-port directory
@@ -3056,7 +3339,7 @@ def build_argparser():
     p.add_argument("--web", action="store_true",
                    help="web-focused deep re-enum: reuse cached ports (or a quick "
                         "web-port probe), skip non-web modules, and run the deep web "
-                        "pass (dir-brute + nikto). Initial scans are fingerprint-only.")
+                        "pass (dir-brute + nikto + vhost fuzzing). Initial scans are fingerprint-only.")
     p.add_argument("--web-timeout", type=int, default=180,
                    help="max seconds for the per-web-port directory brute (default 180)")
     p.add_argument("-v", "--verbose", action="store_true", help="print every command as it runs")
@@ -3128,11 +3411,7 @@ async def amain(args):
 
     print(C.CY + BANNER + C.END)
     info(f"mode: {C.M}{args.mode}{C.END}  workers: {args.workers}  parallel: {args.parallel}")
-    missing = [t for t in ("rustscan", "nmap",
-                           "enum4linux-ng", "nxc", "netexec", "smtp-user-enum") if not TOOLS.get(t)]
-    have = [t for t in ("rustscan", "nmap",
-                        "enum4linux-ng", "nxc", "netexec", "smbclient", "ldapsearch",
-                        "snmpwalk", "curl", "smtp-user-enum") if TOOLS.get(t)]
+    have, missing = tool_availability()
     info(f"tools available: {C.G}{', '.join(have) or 'none'}{C.END}")
     if missing:
         warn(f"missing (modules will degrade/skip): {C.DIM}{', '.join(missing)}{C.END}")

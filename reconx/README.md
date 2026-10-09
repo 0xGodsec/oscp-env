@@ -71,7 +71,7 @@ python3 reconx.py 10.10.10.10                 # single host, full pipeline
 python3 reconx.py 10.10.10.10 --quick         # top-1000 ports, fast
 python3 reconx.py 10.10.10.0/24 --ping-sweep  # sweep a subnet first
 python3 reconx.py target.htb -o loot/         # custom output dir
-python3 reconx.py 10.10.10.10 --web           # deep web re-enum (dir-brute + nikto), reuses cached ports
+python3 reconx.py 10.10.10.10 --web           # deep web re-enum (dir-brute + nikto + vhost fuzz), reuses cached ports
 python3 reconx.py 10.10.10.10 --dry-run       # print the command plan, run nothing
 python3 reconx.py 10.10.10.10 --resume        # pick up an interrupted scan where it left off
 ```
@@ -152,7 +152,7 @@ null/guest AD enum and warns.
    - **SMB/AD** (139/445/389/88/135): netexec shares/users/groups/policy + `--rid-brute` over null & guest sessions, enum4linux-ng, smbclient, ldapsearch anon dump, DC detection; *authenticated* adds full netexec enum (sessions/disks/computers/LAPS + `gpp_password`/`enum_av` modules), share **content spidering** (`spider_plus`), and — with confirmed admin — `--sam`/`--lsa`/`--dpapi`/`--ntds` dumping and `-x` command-execution proof. LDAP authed runs the full AD sweep: asrep/kerberoast, delegation, weak-UAC accounts, gMSA, `adcs`/ESC, `maq`, user-description creds
    - **Remote access** (21/22/23/3389/5985/5900): FTP anon (+nxc `--ls`), SSH NSE + netexec `--sudo-check`/exec, RDP NTLM info + nxc banner, WinRM banner→(authed) dump+exec, VNC no-auth detection
    - **DB & misc** (1433/5432/6379/161/25/53/2049): MSSQL (auth + sa/blank sweep, authed `--query`/`--rid-brute`/dump/xp_cmdshell), **PostgreSQL** (default-cred sweep + psql probe), Redis, SNMP walk, SMTP user-enum, NFS exports (+nxc `--shares`), DNS
-   - **Web** (80/443/8080/8000/8443/8888/3128/9200/5000/8081): an initial scan **fingerprints only** (whatweb + root grab) — the slow directory brute is left out so scans stay fast. Re-run with `--web` for the deep pass (feroxbuster→gobuster dir-brute + nikto), a web-focused re-enum that reuses the earlier scan's ports just like `--ad`. `--no-web` skips web entirely
+   - **Web** (80/443/8080/8000/8443/8888/3128/9200/5000/8081): an initial scan **fingerprints only** (whatweb + root grab) — the slow directory brute is left out so scans stay fast. Re-run with `--web` for the deep pass (feroxbuster→gobuster→ffuf dir-brute + nikto + once-per-host **virtual-host fuzzing** — `ffuf -ac`/`gobuster vhost` against `Host: FUZZ.<domain>`, the domain taken from `-d`, a hostname target, or a root redirect), a web-focused re-enum that reuses the earlier scan's ports just like `--ad`. `--no-web` skips web entirely
 
    > netexec is used across **every** protocol it supports. Read-only enumeration
    > runs whenever the service is up; credential **dumping** and **command

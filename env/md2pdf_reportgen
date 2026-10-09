@@ -73,9 +73,13 @@ else
 	
 	awk '
 	{
-	  # Match Obsidian-style image embed: ![[image.png]]
-	  if (match($0, /!\[\[([^]]+)\]\]/, arr)) {
-	    image = arr[1]
+	  # Match Obsidian-style image embed: ![[image.png]]. Use POSIX 2-arg
+	  # match() + substr (RSTART/RLENGTH), NOT the 3-arg match($0,re,arr)
+	  # capture form - that is a gawk extension and a hard syntax error on
+	  # mawk (the default awk on Debian/Kali/Ubuntu), which aborted the whole
+	  # report under set -e. This works on both mawk and gawk.
+	  if (match($0, /!\[\[[^]]+\]\]/)) {
+	    image = substr($0, RSTART + 3, RLENGTH - 5)   # strip leading "![[" and trailing "]]"
 	    print "\\begin{figure}[H]"
 	    print "  \\centering"
 	    print "  \\fbox{\\includegraphics[width=1\\linewidth]{" image "}}"

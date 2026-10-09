@@ -30,7 +30,7 @@
     [[[child1]]]
       type = Terminal
       parent = window0
-      profile = GlowyDark
+      profile = default
   [[Pentesting]]
     [[[child0]]]
       type = Window

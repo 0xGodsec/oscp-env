@@ -7,13 +7,27 @@ or external tools, so they can be asserted directly.
 
 Run:  cd reconx && python3 -m pytest -q
 """
+import importlib.machinery
+import importlib.util
+import json
 import os
+import tempfile
 import types
 
 import pytest
 
 import reconx
 import reconx_notes
+
+
+def _load_recon_exam():
+    """recon-exam has no .py extension, so load it by path for testing."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recon-exam")
+    loader = importlib.machinery.SourceFileLoader("recon_exam", path)
+    spec = importlib.util.spec_from_loader("recon_exam", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
 
 
 def _args(**kw):
@@ -50,6 +64,21 @@ class TestParsing:
         assert set(svc) == {22, 445}
         assert svc[22] == {"name": "ssh", "version": "OpenSSH 8.2"}
         assert svc[445] == {"name": "microsoft-ds", "version": ""}
+
+    def test_nmap_udp_open_and_open_filtered(self):
+        # "open|filtered" (the common UDP state, incl. real SNMP/TFTP) must not
+        # be dropped - regression for the old `\s+open\s+` parser.
+        out = (
+            "PORT    STATE         SERVICE\n"
+            "161/udp open          snmp\n"
+            "69/udp  open|filtered tftp\n"
+            "53/udp  closed        domain\n"
+        )
+        udp = reconx.parse_nmap_udp(out)
+        assert set(udp) == {161, 69}
+        assert udp[161] == "snmp"                     # confirmed open: bare name
+        assert udp[69] == "tftp (open|filtered)"      # uncertain: labelled
+        assert 53 not in udp                          # closed: dropped
 
 
 # --------------------------------------------------------------------------- #
@@ -275,3 +304,149 @@ class TestNotes:
 
     def test_host_type_of_none(self):
         assert reconx_notes._host_type_of(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# ffuf JSON -> findings (F4: ffuf is now a real dir-brute fallback)
+# --------------------------------------------------------------------------- #
+class TestFfufParsing:
+    SAMPLE = (
+        '{"results":[{"url":"http://10.0.0.1/admin","status":200},'
+        '{"url":"http://10.0.0.1/index.html","status":200},'
+        '{"url":"http://10.0.0.1/.git/config","status":301}]}'
+    )
+
+    def test_ffuf_json_to_lines(self):
+        lines = reconx._ffuf_json_to_lines(self.SAMPLE).splitlines()
+        assert "200 GET http://10.0.0.1/admin" in lines
+        assert "301 GET http://10.0.0.1/.git/config" in lines
+        assert len(lines) == 3
+
+    def test_ffuf_lines_feed_the_shared_parser(self):
+        # the whole point of F4: ffuf output flows through the SAME tested
+        # feroxbuster/gobuster parser, surfacing juicy paths as HIGH.
+        found = []
+        text = reconx._ffuf_json_to_lines(self.SAMPLE)
+        reconx._web_paths_to_findings(text, "10.0.0.1", 80, found)
+        assert any(f.sev == "HIGH" and "/admin" in f.text for f in found)
+        assert any(f.sev == "HIGH" and ".git" in f.text for f in found)
+        assert any(f.sev == "INFO" and "path(s)" in f.text for f in found)
+
+    def test_ffuf_json_malformed_is_safe(self):
+        assert reconx._ffuf_json_to_lines("not json") == ""
+        assert reconx._ffuf_json_to_lines("") == ""
+        assert reconx._ffuf_json_to_lines('{"results":null}') == ""
+
+
+# --------------------------------------------------------------------------- #
+# vhost fuzzing (F5): base-domain resolution + result parsing
+# --------------------------------------------------------------------------- #
+class TestVhostFuzzing:
+    def test_is_ipv4(self):
+        assert reconx._is_ipv4("10.129.58.62")
+        assert not reconx._is_ipv4("ghostlink.htb")
+        assert not reconx._is_ipv4("256.1.1.1")   # octet out of range
+        assert not reconx._is_ipv4("1.2.3")        # not a quad
+
+    def test_registrable_domain(self):
+        assert reconx._registrable_domain("www.ghostlink.htb") == "ghostlink.htb"
+        assert reconx._registrable_domain("ghostlink.htb") == "ghostlink.htb"
+        assert reconx._registrable_domain("10.129.58.62") is None   # IP, not a name
+        assert reconx._registrable_domain("localhost") is None      # single label
+        assert reconx._registrable_domain("") is None
+
+    def test_base_domain_prefers_explicit_flag(self):
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(domain="corp.htb"), "")
+        assert dom == "corp.htb" and redir is None
+
+    def test_base_domain_from_hostname_target(self):
+        dom, redir = reconx._vhost_base_domain("ghostlink.htb", _args(), "")
+        assert dom == "ghostlink.htb" and redir is None
+
+    def test_base_domain_from_redirect(self):
+        # classic HTB lead: bare-IP target 302s to a name-based vhost.
+        root = "HTTP/1.1 302 Found\r\nLocation: http://ghostlink.htb/\r\n\r\n"
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(), root)
+        assert dom == "ghostlink.htb" and redir == "ghostlink.htb"
+
+    def test_base_domain_none_for_bare_ip(self):
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(), "HTTP/1.1 200 OK\r\n\r\n")
+        assert dom is None and redir is None
+
+    def test_parse_ffuf_vhosts(self):
+        text = "admin\ndev\n\nfoo bar\nadmin\n"   # blank + space-bearing + dup are dropped
+        assert reconx._parse_ffuf_vhosts(text, "ghostlink.htb") == [
+            "admin.ghostlink.htb", "dev.ghostlink.htb"]
+
+    def test_parse_gobuster_vhosts(self):
+        text = ("Found: dev.ghostlink.htb Status: 200 [Size: 100]\n"
+                "Found: admin.ghostlink.htb (Status: 200)\n")
+        assert reconx._parse_gobuster_vhosts(text) == [
+            "dev.ghostlink.htb", "admin.ghostlink.htb"]
+
+
+# --------------------------------------------------------------------------- #
+# recon-exam reads ReconX's FLAT --workspace layout (regression: it used to
+# read <ws>/scans/reconx/<ip>/, which ReconX never creates in flat mode, so
+# domain detection + triage silently found nothing and Pass 2 never ran).
+# --------------------------------------------------------------------------- #
+class TestReconExamFlatPaths:
+    def _flat_ws(self):
+        rx = _load_recon_exam()
+        ip = "10.129.58.62"
+        ws = tempfile.mkdtemp()
+        flat = os.path.join(ws, "scans", "reconx")   # NO per-ip subdir (flat mode)
+        os.makedirs(flat)
+        with open(os.path.join(flat, ".reconx_state.json"), "w") as f:
+            json.dump({"target": ip, "ports": [88, 389, 445],
+                       "findings": [["HIGH", "ad", 88, "Kerberos open"]]}, f)
+        with open(os.path.join(flat, "smb_nxc.txt"), "w") as f:
+            f.write("SMB 10.129.58.62 445 DC01 (name:DC01) (domain:ghostlink.htb) (DC:True)\n")
+        return rx, ws, ip, flat
+
+    def test_reconx_out_has_no_ip_segment(self):
+        rx, ws, ip, flat = self._flat_ws()
+        assert rx.reconx_out(ws) == flat
+        assert not rx.reconx_out(ws).endswith(ip)
+
+    def test_load_state_reads_flat_layout(self):
+        rx, ws, ip, _ = self._flat_ws()
+        st = rx.load_state(ws, ip)
+        assert st.get("ports") == [88, 389, 445]      # empty {} before the fix
+        assert st.get("findings")
+
+    def test_identity_and_triage_populated(self):
+        rx, ws, ip, _ = self._flat_ws()
+        dom, fqdn, short = rx.extract_identity(rx.reconx_out(ws))
+        assert dom == "ghostlink.htb"                 # None before the fix -> Pass 2 skipped
+        assert short == "dc01"
+        assert rx.classify_box(rx.load_state(ws, ip), dom) == "ad"
+
+
+# --------------------------------------------------------------------------- #
+# Tool-availability summary (F1: derived from the full TOOLS table, not a
+# hardcoded subset, so a missing capability can't be silently hidden)
+# --------------------------------------------------------------------------- #
+class TestToolAvailability:
+    def test_alias_group_counts_as_present(self, monkeypatch):
+        # netexec present via the 'nxc' alias; enum4linux present via '-ng'.
+        tools = {c: False for grp in reconx.CAPABILITY_GROUPS for c in grp[1]}
+        tools["nxc"] = True
+        tools["enum4linux-ng"] = True
+        monkeypatch.setattr(reconx, "TOOLS", tools)
+        present, missing = reconx.tool_availability()
+        assert "nxc" in present                 # shows the actual found binary
+        assert "enum4linux-ng" in present
+        assert "netexec" not in missing         # the group is satisfied
+        assert "enum4linux" not in missing
+
+    def test_missing_capability_is_reported(self, monkeypatch):
+        # Regression for F1: with only curl installed, every other capability
+        # (ldapsearch, searchsploit, dir-brute, ...) MUST appear in 'missing'.
+        tools = {c: False for grp in reconx.CAPABILITY_GROUPS for c in grp[1]}
+        tools["curl"] = True
+        monkeypatch.setattr(reconx, "TOOLS", tools)
+        present, missing = reconx.tool_availability()
+        assert present == ["curl"]
+        for cap in ("ldapsearch", "searchsploit", "dir-brute", "nmap", "netexec", "smbclient"):
+            assert cap in missing
