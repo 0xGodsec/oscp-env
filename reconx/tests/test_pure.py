@@ -275,3 +275,64 @@ class TestNotes:
 
     def test_host_type_of_none(self):
         assert reconx_notes._host_type_of(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# ffuf JSON -> findings (F4: ffuf is now a real dir-brute fallback)
+# --------------------------------------------------------------------------- #
+class TestFfufParsing:
+    SAMPLE = (
+        '{"results":[{"url":"http://10.0.0.1/admin","status":200},'
+        '{"url":"http://10.0.0.1/index.html","status":200},'
+        '{"url":"http://10.0.0.1/.git/config","status":301}]}'
+    )
+
+    def test_ffuf_json_to_lines(self):
+        lines = reconx._ffuf_json_to_lines(self.SAMPLE).splitlines()
+        assert "200 GET http://10.0.0.1/admin" in lines
+        assert "301 GET http://10.0.0.1/.git/config" in lines
+        assert len(lines) == 3
+
+    def test_ffuf_lines_feed_the_shared_parser(self):
+        # the whole point of F4: ffuf output flows through the SAME tested
+        # feroxbuster/gobuster parser, surfacing juicy paths as HIGH.
+        found = []
+        text = reconx._ffuf_json_to_lines(self.SAMPLE)
+        reconx._web_paths_to_findings(text, "10.0.0.1", 80, found)
+        assert any(f.sev == "HIGH" and "/admin" in f.text for f in found)
+        assert any(f.sev == "HIGH" and ".git" in f.text for f in found)
+        assert any(f.sev == "INFO" and "path(s)" in f.text for f in found)
+
+    def test_ffuf_json_malformed_is_safe(self):
+        assert reconx._ffuf_json_to_lines("not json") == ""
+        assert reconx._ffuf_json_to_lines("") == ""
+        assert reconx._ffuf_json_to_lines('{"results":null}') == ""
+
+
+# --------------------------------------------------------------------------- #
+# Tool-availability summary (F1: derived from the full TOOLS table, not a
+# hardcoded subset, so a missing capability can't be silently hidden)
+# --------------------------------------------------------------------------- #
+class TestToolAvailability:
+    def test_alias_group_counts_as_present(self, monkeypatch):
+        # netexec present via the 'nxc' alias; enum4linux present via '-ng'.
+        tools = {c: False for grp in reconx.CAPABILITY_GROUPS for c in grp[1]}
+        tools["nxc"] = True
+        tools["enum4linux-ng"] = True
+        monkeypatch.setattr(reconx, "TOOLS", tools)
+        present, missing = reconx.tool_availability()
+        assert "nxc" in present                 # shows the actual found binary
+        assert "enum4linux-ng" in present
+        assert "netexec" not in missing         # the group is satisfied
+        assert "enum4linux" not in missing
+
+    def test_missing_capability_is_reported(self, monkeypatch):
+        # Regression for F1: with only curl installed, every other capability
+        # (ldapsearch, searchsploit, dir-brute, ...) MUST appear in 'missing'.
+        tools = {c: False for grp in reconx.CAPABILITY_GROUPS for c in grp[1]}
+        tools["curl"] = True
+        monkeypatch.setattr(reconx, "TOOLS", tools)
+        present, missing = reconx.tool_availability()
+        assert present == ["curl"]
+        for cap in ("ldapsearch", "searchsploit", "dir-brute", "nmap", "netexec", "smbclient"):
+            assert cap in missing

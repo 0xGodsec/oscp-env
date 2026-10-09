@@ -126,12 +126,20 @@ class FindingsList(list):
     NOTES.md - findings, unlike command output, only ever live in memory
     otherwise."""
 
-    def __init__(self, *a, state_store=None, **kw):
+    def __init__(self, *a, state_store=None, dry_run=False, **kw):
         super().__init__(*a, **kw)
         self._seen = set()
         self._state_store = state_store
+        self._dry_run = dry_run
 
     def append(self, finding):
+        # --dry-run runs no commands, so every module sees the rc=0/empty stub
+        # from Runner.run - which makes rc-gated checks (e.g. enum_ftp's
+        # "curl exited 0 => anonymous login") falsely fire. The command plan is
+        # the only intended dry-run output, so suppress finding emission entirely
+        # rather than print proof-less findings.
+        if self._dry_run:
+            return
         key = (finding.sev, finding.service, finding.port, finding.text)
         if key in self._seen:
             return
@@ -179,6 +187,55 @@ def _first_tool(*candidates):
         if TOOLS.get(cand):
             return cand
     return None
+
+
+# Capability groups for the startup "tools available / missing" summary. Each
+# capability is satisfied by ANY one of its candidate binaries (aliases): e.g.
+# netexec counts as present if nxc OR netexec OR crackmapexec is installed, and
+# the web dir-brute capability if feroxbuster OR gobuster OR ffuf is. Derived
+# from the full TOOLS table (not a hardcoded subset) so the summary can't
+# silently hide a missing capability - the headline "flags missing tools"
+# guarantee only holds if every capability a module relies on is reported.
+CAPABILITY_GROUPS = [
+    ("rustscan",         ["rustscan"]),
+    ("nmap",             ["nmap"]),
+    ("netexec",          ["nxc", "netexec", "crackmapexec"]),
+    ("smbclient",        ["smbclient"]),
+    ("rpcclient",        ["rpcclient"]),
+    ("enum4linux",       ["enum4linux-ng", "enum4linux"]),
+    ("ldapsearch",       ["ldapsearch"]),
+    ("GetUserSPNs",      ["impacket-GetUserSPNs", "GetUserSPNs.py"]),
+    ("GetNPUsers",       ["impacket-GetNPUsers", "GetNPUsers.py"]),
+    ("bloodhound-python", ["bloodhound-python", "bloodhound-ce-python"]),
+    ("snmpwalk",         ["snmpwalk"]),
+    ("onesixtyone",      ["onesixtyone"]),
+    ("showmount",        ["showmount"]),
+    ("dig",              ["dig"]),
+    ("smtp-user-enum",   ["smtp-user-enum"]),
+    ("redis-cli",        ["redis-cli"]),
+    ("psql",             ["psql"]),
+    ("mysql",            ["mysql", "mariadb"]),
+    ("searchsploit",     ["searchsploit"]),
+    ("whatweb",          ["whatweb"]),
+    ("dir-brute",        ["feroxbuster", "gobuster", "ffuf"]),
+    ("nikto",            ["nikto"]),
+    ("curl",             ["curl"]),
+    ("openssl",          ["openssl"]),
+    ("nc",               ["ncat", "nc"]),
+]
+
+
+def tool_availability():
+    """(present, missing) capability-label lists for the startup summary, built
+    from the full TOOLS table. A capability is present if ANY alias binary is
+    installed (its found name is shown); missing if none are. Replaces the old
+    hardcoded subset lists that reported ~10 tools and hid the rest, so a box
+    missing e.g. ldapsearch / searchsploit / the dir-brute tools now says so."""
+    present, missing = [], []
+    for label, candidates in CAPABILITY_GROUPS:
+        found = next((c for c in candidates if TOOLS.get(c)), None)
+        (present.append(found) if found else missing.append(label))
+    return present, missing
 
 
 def _first_existing_file(candidates):
@@ -2000,6 +2057,24 @@ def _web_scheme(port, name):
     return "http"
 
 
+def _ffuf_json_to_lines(text):
+    """Convert ffuf JSON (-of json) into feroxbuster-style 'STATUS GET URL'
+    lines so the existing _web_paths_to_findings parser handles ffuf output the
+    same way it handles feroxbuster/gobuster - no second parser to keep in sync.
+    Tolerant of malformed/empty input (returns '')."""
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return ""
+    lines = []
+    for r in (data.get("results") or []):
+        url = r.get("url") or ""
+        status = r.get("status")
+        if url and status:
+            lines.append(f"{status} GET {url}")
+    return "\n".join(lines)
+
+
 def _web_paths_to_findings(text, host, port, findings, limit=12):
     """Parse feroxbuster/gobuster output; surface juicy paths as HIGH, and a
     one-line INFO count of everything else, so notes don't drown in 200s."""
@@ -2073,9 +2148,27 @@ async def enum_http(host, port, runner, args, findings):
         cmd = (f"gobuster dir -u {url} -w {shlex.quote(wl)} -q -k -t 50 --no-error")
         rc, out = await runner.run(cmd, f"{tag}/gobuster.txt", "gobuster", timeout=cap + 30)
         _web_paths_to_findings(out, host, port, findings)
+    elif wl and TOOLS.get("ffuf"):
+        # ffuf has no feroxbuster/gobuster-style stdout, so write JSON and parse
+        # that via _ffuf_json_to_lines. Path mirrors Runner.run's outfile mapping
+        # (flat mode strips the leading host segment) so it lands beside the
+        # other web output. In --dry-run no file is written -> the read just
+        # no-ops, consistent with dry-run emitting no findings.
+        rel = f"{tag}/ffuf.json"
+        if runner.flat and "/" in rel:
+            rel = rel.split("/", 1)[1]
+        jpath = os.path.join(runner.outdir, rel)
+        cmd = (f"ffuf -u {url}/FUZZ -w {shlex.quote(wl)} -t 50 -k -s "
+               f"-mc 200,204,301,302,307,401,403 -of json -o {shlex.quote(jpath)}")
+        await runner.run(cmd, f"{tag}/ffuf_stdout.txt", "ffuf", timeout=cap + 30)
+        try:
+            with open(jpath, errors="replace") as fh:
+                _web_paths_to_findings(_ffuf_json_to_lines(fh.read()), host, port, findings)
+        except OSError:
+            pass
     else:
         findings.append(Finding("INFO", "http", port,
-            f"Web on {url} - no feroxbuster/gobuster+wordlist found; run your own dir brute"))
+            f"Web on {url} - no feroxbuster/gobuster/ffuf+wordlist found; run your own dir brute"))
     if TOOLS.get("nikto"):
         rc, out = await runner.run(
             f"nikto -h {url} -maxtime {cap}s -ask no -nointeractive",
@@ -2668,7 +2761,7 @@ async def scan_host(host, runner, args):
         state_store.data["started_at"] = state_store.data.get("started_at") or \
             datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    findings = FindingsList(state_store=state_store)
+    findings = FindingsList(state_store=state_store, dry_run=runner.dry_run)
     if args.resume and state_store and state_store.data.get("findings"):
         for sev, svc, port, text in state_store.data["findings"]:
             findings.seed(Finding(sev, svc, port, text))
@@ -3128,11 +3221,7 @@ async def amain(args):
 
     print(C.CY + BANNER + C.END)
     info(f"mode: {C.M}{args.mode}{C.END}  workers: {args.workers}  parallel: {args.parallel}")
-    missing = [t for t in ("rustscan", "nmap",
-                           "enum4linux-ng", "nxc", "netexec", "smtp-user-enum") if not TOOLS.get(t)]
-    have = [t for t in ("rustscan", "nmap",
-                        "enum4linux-ng", "nxc", "netexec", "smbclient", "ldapsearch",
-                        "snmpwalk", "curl", "smtp-user-enum") if TOOLS.get(t)]
+    have, missing = tool_availability()
     info(f"tools available: {C.G}{', '.join(have) or 'none'}{C.END}")
     if missing:
         warn(f"missing (modules will degrade/skip): {C.DIM}{', '.join(missing)}{C.END}")
