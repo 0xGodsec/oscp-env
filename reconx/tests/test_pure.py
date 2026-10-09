@@ -310,6 +310,53 @@ class TestFfufParsing:
 
 
 # --------------------------------------------------------------------------- #
+# vhost fuzzing (F5): base-domain resolution + result parsing
+# --------------------------------------------------------------------------- #
+class TestVhostFuzzing:
+    def test_is_ipv4(self):
+        assert reconx._is_ipv4("10.129.58.62")
+        assert not reconx._is_ipv4("ghostlink.htb")
+        assert not reconx._is_ipv4("256.1.1.1")   # octet out of range
+        assert not reconx._is_ipv4("1.2.3")        # not a quad
+
+    def test_registrable_domain(self):
+        assert reconx._registrable_domain("www.ghostlink.htb") == "ghostlink.htb"
+        assert reconx._registrable_domain("ghostlink.htb") == "ghostlink.htb"
+        assert reconx._registrable_domain("10.129.58.62") is None   # IP, not a name
+        assert reconx._registrable_domain("localhost") is None      # single label
+        assert reconx._registrable_domain("") is None
+
+    def test_base_domain_prefers_explicit_flag(self):
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(domain="corp.htb"), "")
+        assert dom == "corp.htb" and redir is None
+
+    def test_base_domain_from_hostname_target(self):
+        dom, redir = reconx._vhost_base_domain("ghostlink.htb", _args(), "")
+        assert dom == "ghostlink.htb" and redir is None
+
+    def test_base_domain_from_redirect(self):
+        # classic HTB lead: bare-IP target 302s to a name-based vhost.
+        root = "HTTP/1.1 302 Found\r\nLocation: http://ghostlink.htb/\r\n\r\n"
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(), root)
+        assert dom == "ghostlink.htb" and redir == "ghostlink.htb"
+
+    def test_base_domain_none_for_bare_ip(self):
+        dom, redir = reconx._vhost_base_domain("10.129.58.62", _args(), "HTTP/1.1 200 OK\r\n\r\n")
+        assert dom is None and redir is None
+
+    def test_parse_ffuf_vhosts(self):
+        text = "admin\ndev\n\nfoo bar\nadmin\n"   # blank + space-bearing + dup are dropped
+        assert reconx._parse_ffuf_vhosts(text, "ghostlink.htb") == [
+            "admin.ghostlink.htb", "dev.ghostlink.htb"]
+
+    def test_parse_gobuster_vhosts(self):
+        text = ("Found: dev.ghostlink.htb Status: 200 [Size: 100]\n"
+                "Found: admin.ghostlink.htb (Status: 200)\n")
+        assert reconx._parse_gobuster_vhosts(text) == [
+            "dev.ghostlink.htb", "admin.ghostlink.htb"]
+
+
+# --------------------------------------------------------------------------- #
 # Tool-availability summary (F1: derived from the full TOOLS table, not a
 # hardcoded subset, so a missing capability can't be silently hidden)
 # --------------------------------------------------------------------------- #

@@ -2041,6 +2041,152 @@ _WEB_WORDLISTS = [
 def _web_wordlist():
     return _first_existing_file(_WEB_WORDLISTS)
 
+
+# DNS/vhost name lists for virtual-host fuzzing (--web). Smaller than the dir
+# lists on purpose: vhost fuzzing fires one request per name against the live
+# host, so a 5k list is the right order of magnitude for an exam box.
+_VHOST_WORDLISTS = [
+    "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+    "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
+    "/usr/share/seclists/Discovery/DNS/namelist.txt",
+    "/usr/share/wordlists/amass/subdomains-top1mil-5000.txt",
+    "/usr/share/wordlists/dnsmap.txt",
+]
+def _vhost_wordlist():
+    return _first_existing_file(_VHOST_WORDLISTS)
+
+
+def _is_ipv4(s):
+    """True for a dotted-quad like 10.129.58.62 (so we don't try to fuzz
+    FUZZ.<ip>, which is meaningless)."""
+    parts = (s or "").split(".")
+    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _registrable_domain(hostname):
+    """Reduce a hostname to the base domain we append FUZZ. to: the last two
+    labels (ghostlink.htb, www.ghostlink.htb -> ghostlink.htb). Returns None
+    for an IP or a single-label/empty name. Good enough for lab TLDs
+    (.htb/.local/.thm/...); multi-part public suffixes like co.uk aren't a
+    concern on exam/lab targets and are documented as a known limitation."""
+    if not hostname or _is_ipv4(hostname):
+        return None
+    labels = [l for l in hostname.strip().strip(".").lower().split(".") if l]
+    if len(labels) < 2:
+        return None
+    return ".".join(labels[-2:])
+
+
+_VHOST_REDIRECT_RX = re.compile(r"^location:\s*https?://([A-Za-z0-9.-]+)", re.I | re.M)
+
+
+def _vhost_base_domain(host, args, root_out):
+    """Pick the domain to vhost-fuzz, in priority order:
+      1. an explicit -d/--domain,
+      2. the target itself when it's a hostname (reconx ghostlink.htb),
+      3. a hostname from the root page's redirect Location (the common HTB
+         'IP 302s to ghostlink.htb' lead).
+    Returns (domain, redirect_host_or_None); domain is None if nothing usable
+    resolves (e.g. a bare-IP target that doesn't redirect to a name)."""
+    for cand in (getattr(args, "domain", None), host):
+        dom = _registrable_domain(cand)
+        if dom:
+            return dom, None
+    m = _VHOST_REDIRECT_RX.search(root_out or "")
+    if m and not _is_ipv4(m.group(1)):
+        return _registrable_domain(m.group(1)), m.group(1)
+    return None, None
+
+
+def _parse_ffuf_vhosts(text, domain, limit=25):
+    """ffuf -s prints just the matched FUZZ keyword, one per line (nothing
+    else), so each clean label becomes <label>.<domain>. Version-stable and
+    free of JSON input-encoding quirks."""
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        label = line.strip()
+        if label and re.fullmatch(r"[A-Za-z0-9_-]+", label) and label not in seen:
+            seen.add(label)
+            out.append(f"{label}.{domain}")
+            if len(out) >= limit:
+                break
+    return out
+
+
+def _parse_gobuster_vhosts(text, limit=25):
+    """gobuster vhost prints 'Found: name.domain Status: 200 [Size: N]'."""
+    out, seen = [], set()
+    for line in (text or "").splitlines():
+        m = re.search(r"Found:\s*([A-Za-z0-9._-]+)", line)
+        if m and m.group(1) not in seen:
+            seen.add(m.group(1))
+            out.append(m.group(1))
+            if len(out) >= limit:
+                break
+    return out
+
+
+# vhost fuzzing is per-host, not per-web-port: this guards against the N web
+# ports on one host each kicking off a (slow) fuzz. asyncio is cooperative, so
+# the check+add below is race-free as long as nothing awaits between them.
+_VHOST_FUZZED = set()
+
+
+async def enum_vhosts(host, port, scheme, url, runner, args, findings, root_out, cap):
+    """Virtual-host discovery for the --web deep pass. Resolves a base domain,
+    then fuzzes Host: FUZZ.<domain> with ffuf -ac (auto-calibrated, so the
+    default/wildcard response is filtered) or gobuster vhost. Each hit is a
+    HIGH finding naming the vhost to add to /etc/hosts. Runs at most once per
+    host; degrades to a single INFO when it can't run."""
+    if host in _VHOST_FUZZED:
+        return
+    _VHOST_FUZZED.add(host)
+
+    domain, redirect_host = _vhost_base_domain(host, args, root_out)
+    if redirect_host:
+        findings.append(Finding("HIGH", "http", port,
+            f"Root redirects to '{redirect_host}' - add '{host} {redirect_host}' to "
+            f"/etc/hosts and re-browse (name-based vhost)"))
+    if not domain:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped on {url} - no base domain; pass -d <domain> "
+            f"(or add a discovered vhost to /etc/hosts) and re-run --web"))
+        return
+
+    wl = _vhost_wordlist()
+    if not wl:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped - no DNS wordlist found (seclists subdomains-top1million-*); "
+            f"install seclists or fuzz Host: FUZZ.{domain} manually"))
+        return
+
+    vhosts = []
+    if TOOLS.get("ffuf"):
+        # -ac auto-calibrates against the base response so unknown vhosts (which
+        # return the default page) are filtered; -s prints only matched labels.
+        cmd = (f"ffuf -u {scheme}://{host}:{port}/ -H {shlex.quote('Host: FUZZ.' + domain)} "
+               f"-w {shlex.quote(wl)} -t 40 -k -ac -s -maxtime {cap}")
+        rc, out = await runner.run(cmd, f"{host}/web_{port}/ffuf_vhost.txt",
+                                   "ffuf-vhost", timeout=cap + 30)
+        vhosts = _parse_ffuf_vhosts(out, domain)
+    elif TOOLS.get("gobuster"):
+        cmd = (f"gobuster vhost -u {scheme}://{host}:{port} --domain {shlex.quote(domain)} "
+               f"--append-domain -w {shlex.quote(wl)} -q -k -t 40")
+        rc, out = await runner.run(cmd, f"{host}/web_{port}/gobuster_vhost.txt",
+                                   "gobuster-vhost", timeout=cap + 30)
+        vhosts = _parse_gobuster_vhosts(out)
+    else:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz skipped - no ffuf/gobuster; fuzz Host: FUZZ.{domain} manually"))
+        return
+
+    for vh in vhosts:
+        findings.append(Finding("HIGH", "http", port,
+            f"virtual host: {vh} - add '{host} {vh}' to /etc/hosts and browse {scheme}://{vh}:{port}"))
+    if not vhosts:
+        findings.append(Finding("INFO", "http", port,
+            f"vhost fuzz on {domain} found nothing new (auto-calibrated) - try a larger DNS list"))
+
 # high-value paths worth pulling straight into the ranked findings
 _WEB_JUICY = re.compile(
     r"(\.git|\.svn|\.env|\.htpasswd|/backup|\.bak|\.old|\.sql|/upload|"
@@ -2123,9 +2269,11 @@ async def enum_http(host, port, runner, args, findings):
         m = re.search(r"Title\[([^\]]+)\]", out or "")
         if m:
             findings.append(Finding("INFO", "http", port, f"Web title: {m.group(1).strip()[:80]}"))
+    root_out = ""
     if TOOLS.get("curl"):
         rc, out = await runner.run(
             f"curl -sSik --max-time 15 {url}/", f"{tag}/curl_root.txt", "curl-root", timeout=25)
+        root_out = out or ""
         scan_findings(out, "http", port, findings)
 
     if not deep:
@@ -2174,6 +2322,9 @@ async def enum_http(host, port, runner, args, findings):
             f"nikto -h {url} -maxtime {cap}s -ask no -nointeractive",
             f"{tag}/nikto.txt", "nikto", timeout=cap + 30)
         scan_findings(out, "http", port, findings)
+    # virtual-host discovery (once per host; see enum_vhosts) - a web box often
+    # gates its real app behind a name-based vhost that must be in /etc/hosts.
+    await enum_vhosts(host, port, scheme, url, runner, args, findings, root_out, cap)
     good(f"web enum ({url}) done")
 
 
@@ -2991,7 +3142,11 @@ WEB ENUMERATION
                             web-port probe if there's no cache), skip every
                             non-web module, and run the deep pass on each web
                             port - directory brute (feroxbuster, else
-                            gobuster) + nikto. No second full port scan.
+                            gobuster, else ffuf) + nikto, plus once-per-host
+                            virtual-host fuzzing (ffuf -ac / gobuster vhost
+                            against Host: FUZZ.<domain>, domain from -d, a
+                            hostname target, or a root redirect). No second
+                            full port scan.
     --no-web                skip web enumeration entirely (not even the
                             fingerprint)
     --web-timeout SECONDS   max seconds for the per-web-port directory
@@ -3149,7 +3304,7 @@ def build_argparser():
     p.add_argument("--web", action="store_true",
                    help="web-focused deep re-enum: reuse cached ports (or a quick "
                         "web-port probe), skip non-web modules, and run the deep web "
-                        "pass (dir-brute + nikto). Initial scans are fingerprint-only.")
+                        "pass (dir-brute + nikto + vhost fuzzing). Initial scans are fingerprint-only.")
     p.add_argument("--web-timeout", type=int, default=180,
                    help="max seconds for the per-web-port directory brute (default 180)")
     p.add_argument("-v", "--verbose", action="store_true", help="print every command as it runs")
