@@ -16,6 +16,7 @@ loot/
 users.csv
 
 # stray target/engagement artifacts (captured from boxes, never part of the kit)
+.ghostlink-agent-state.md
 *.uac
 .htaccess
 exam-harness/index.php
