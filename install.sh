@@ -55,7 +55,18 @@ if [ -d "$REPO/exam-harness/scripts" ]; then
   for s in "$REPO/exam-harness/scripts/"*.sh; do
     [ -f "$s" ] || continue
     chmod +x "$s" 2>/dev/null || true
-    sudo ln -sf "$s" "/usr/local/bin/$(basename "${s%.sh}")"
+    name="$(basename "${s%.sh}")"
+    # Don't clobber the ReconX launchers installed just above: exam-harness
+    # ships its own recon.sh (a simpler nmap wrapper), and a blanket link would
+    # overwrite `recon` -> ReconX with `recon` -> recon.sh. The top-level README
+    # documents `recon` as ReconX and exam-harness docs always call recon.sh by
+    # path, so keep ReconX on `recon` and expose the wrapper as `recon-basic`.
+    case "$name" in
+      recon|recon-exam)
+        warn "exam-harness $name.sh renamed to ${name}-basic (so it doesn't shadow the ReconX '$name')"
+        name="${name}-basic" ;;
+    esac
+    sudo ln -sf "$s" "/usr/local/bin/$name"
   done
 fi
 
