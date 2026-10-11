@@ -7,7 +7,24 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   2. fuzzy-httpserver  - typo-tolerant: serves the right file even if the wget path has a typo
 #   3. python http.server - download only, always present
 cd "$KIT/serve" || exit 1
-PORT="${1:-7890}"
+
+# Accept the port as a bare positional (./serve.sh 9090) or flag style
+# (-p 9090, -p=9090, --port 9090, --port=9090). Default 7890.
+PORT=7890
+case "${1:-}" in
+  "" ) ;;
+  -p|--port ) PORT="${2:-}" ;;
+  -p=*|--port=* ) PORT="${1#*=}" ;;
+  -* ) echo "usage: $(basename "$0") [port] | [-p|--port PORT]" >&2; exit 2 ;;
+  * ) PORT="$1" ;;
+esac
+
+# Validate: must be a plain integer in the TCP port range.
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "[!] invalid port: '$PORT' (want 1-65535)" >&2
+  echo "    usage: $(basename "$0") [port] | [-p|--port PORT]" >&2
+  exit 2
+fi
 
 # Ports <1024 need root to bind; the default (7890) does not, so don't force a
 # sudo password prompt when it isn't required.
