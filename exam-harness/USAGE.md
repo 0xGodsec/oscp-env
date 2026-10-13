@@ -76,6 +76,24 @@ Visualize collected BloodHound data (the .zip from ad-fastpath/reconx):
 ./scripts/bloodhound.sh stop
 ```
 
+### Pivot to an internal subnet (ligolo-ng)
+When a compromised host is dual-homed (a second NIC onto 172.16.x.x you can't reach
+from Kali), tunnel through it with ligolo. `pivot.sh` handles the Kali side; you drop
+the agent (already staged in `serve/`) on the pivot host.
+```
+# pane A: ./scripts/serve.sh 7890      # must be running so the target can pull the agent
+./scripts/pivot.sh up                  # creates 'ligolo' tun iface + opens the proxy console
+./scripts/pivot.sh agent               # prints agent download+connect one-liners (Linux/Win)
+#   -> run the one-liner on the pivot host; in the proxy console:  session  then  start
+./scripts/pivot.sh route 172.16.5.0/24 # internal subnet now reachable DIRECTLY from Kali
+./scripts/pivot.sh status              # iface / routes / proxy state
+./scripts/pivot.sh down                # tear down when finished
+```
+Routed, not proxied — run `nmap`/`nxc`/the AD scripts straight at the internal IPs (no
+proxychains needed). Reverse shell from an internal host: `./scripts/pivot.sh revshell 443`
+prints the `listener_add` console command that forwards the pivot's :443 back to your Kali
+listener.
+
 ## E. Capture proof (do this the MOMENT you get each flag)
 ```
 ./scripts/proof.sh -o windows                                  # shows capture cmd
