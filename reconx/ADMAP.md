@@ -91,16 +91,24 @@ findings.
 
 - **Phase 0 — no creds:** SMB null/guest, RID-brute, LDAP anonymous bind,
   enum4linux-ng, rpcclient, DNS/SRV, AS-REP (no-preauth), kerbrute userenum,
-  pre2k; plus `[MANUAL]` Responder / ntlmrelayx / coercion.
+  pre2k; plus `[MANUAL]` Responder / ntlmrelayx / coercion / mitm6 (IPv6).
 - **Phase 1 — username(s):** read the password policy first, lockout-aware
   spray `[SPRAY]`, AS-REP roast.
 - **Phase 2 — valid creds:** validate + find where you're admin, BloodHound,
   Kerberoast, AS-REP, share spidering, GPP cpassword, LDAP property mining,
-  Certipy ADCS `find`, delegation enum; `[MANUAL]` hashcat, ACL-edge abuse,
-  ADCS ESC exploitation.
+  **LAPS** and **gMSA** password reads, Certipy ADCS `find`, delegation enum,
+  MachineAccountQuota read, trust enumeration, MSSQL access/priv/link enum;
+  `[MANUAL]` hashcat, ACL-edge abuse, **Shadow Credentials**
+  (msDS-KeyCredentialLink → PKINIT → UnPAC-the-hash), ADCS ESC exploitation,
+  **Pass-the-Certificate** (PKINIT with an existing PFX), **RBCD** (addcomputer
+  → rbcd → getST → psexec), **unconstrained** (coerce → capture DC TGT) and
+  **constrained** (S4U getST) delegation abuse, **PrintNightmare /
+  PrintSpoofer** → SYSTEM, **noPac** (CVE-2021-42278/42287), **MSSQL → RCE**
+  (xp_cmdshell / EXECUTE AS / linked servers).
 - **Phase 3 — local admin:** `[MANUAL]` SAM/LSA + LSASS + DPAPI dump, lateral
   movement (psexec/wmiexec/evil-winrm).
-- **Phase 4 — domain dominance:** `[MANUAL]` DCSync / NTDS, golden ticket.
+- **Phase 4 — domain dominance:** `[MANUAL]` DCSync / NTDS, golden ticket,
+  child → parent domain escalation (SID-history / inter-realm TGT).
 
 ## Extending the catalog
 

