@@ -8,6 +8,9 @@ id_rsa*
 # recon output / loot / runtime
 reconx/reconx-results/
 **/scans/reconx/
+**/scans/admap/
+# admap playbook when admap.py is run without -o (writes to CWD)
+ad_playbook.md
 exam-harness/loot/
 exam-harness/logs/
 exam-harness/targets/*/
