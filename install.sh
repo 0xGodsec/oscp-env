@@ -44,10 +44,12 @@ sudo install -m 755 "$REPO/env/md2pdf_reportgen"       /usr/local/bin/md2pdf_rep
 sudo install -m 755 "$REPO/env/toggle-terminal-logging" /usr/local/bin/toggle-terminal-logging
 
 # --- 2. ReconX launchers -> /usr/local/bin (symlinks track repo updates) ------
-say "linking ReconX (recon, recon-exam)…"
+say "linking ReconX (recon, recon-exam, admap)…"
 sudo ln -sf "$REPO/reconx/recon"      /usr/local/bin/recon
 sudo ln -sf "$REPO/reconx/recon-exam" /usr/local/bin/recon-exam
-chmod +x "$REPO/reconx/recon" "$REPO/reconx/recon-exam" "$REPO/reconx/reconx.py" 2>/dev/null || true
+sudo ln -sf "$REPO/reconx/admap"      /usr/local/bin/admap
+chmod +x "$REPO/reconx/recon" "$REPO/reconx/recon-exam" "$REPO/reconx/admap" \
+         "$REPO/reconx/reconx.py" "$REPO/reconx/admap.py" 2>/dev/null || true
 
 # --- 3. exam-harness scripts (rx.sh, proof.sh, …) on PATH via a wrapper dir ---
 if [ -d "$REPO/exam-harness/scripts" ]; then
@@ -114,4 +116,5 @@ ok "done. Open a NEW terminal (loads the env), then:"
 echo -e "   ${C}setup_pentest_env --oscp-exam targets.txt${N}   # build the exam workspace + IP vars"
 echo -e "   ${C}recon-exam -u <user> -p <pass> --staged --parallel 3${N}   # two-pass AD recon"
 echo -e "   ${C}recon <ip>${N}                                   # single box into its workspace"
+echo -e "   ${C}admap dc01 -d <dom> -u <u> -p <pw> --run${N}     # AD attack-path playbook (mindmap)"
 echo -e "   check missing tools with: ${C}$REPO/env/… / oscp-doctor${N} (optional)"

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# admap - AD attack-path assistant, wired into the OSCP exam environment.
+#
+# Sits one step past `recon`: once ReconX has told you what's on a box and you
+# know your level of access (nothing / a username / valid creds / local admin),
+# admap maps that state onto the Orange Cyberdefense AD mindmap and prints a
+# ranked, filled-in playbook. --run executes only the read-only [ENUM] steps;
+# exploitation stays [MANUAL].
+#
+# Fits the same workflow as `recon`: it resolves the box workspace + target
+# from the vars setup_pentest_env exports and files output + ad_playbook.md
+# under the box's scans/admap/ (flat, like ReconX's single-host --workspace).
+#
+# Usage:
+#   admap [TARGET] [admap flags...]
+#     TARGET  an IP/host, OR a var name: dc01 ms01 ms02 t1 t2 t3 ip1..
+#             (omitted -> first defined of DC01_IP, T1..T3_IP, MS01/02_IP, IP1)
+#   admap -w /path/to/box <TARGET> [flags]     # force a workspace
+#
+# Examples:
+#   admap dc01 --anon                                   # no creds yet
+#   admap dc01 -d corp.htb --users users.txt            # from RID-brute output
+#   admap dc01 -d corp.htb -u alex -p 'Pw!' --dc-ip <dc> --run
+#   admap ms01 -u admin -H <lm:nt> --local-admin        # pass-the-hash foothold
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ADMAP="$HERE/admap.py"
+[ -f "$ADMAP" ] || { echo "[!] admap.py not found next to admap ($ADMAP)"; exit 1; }
+
+# Pull in target IP vars + DIR_NAME that setup_pentest_env exported.
+[ -f "$HOME/.my_penenv_settings" ] && source "$HOME/.my_penenv_settings" || true
+
+WS=""
+if [[ "${1:-}" == "-w" || "${1:-}" == "--workspace" ]]; then
+  WS="$2"; shift 2
+fi
+
+resolve_target() {
+  local t="$1"
+  if [[ "$t" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "$t" == *.* ]] || [[ "$t" == *:* ]]; then
+    echo "$t"; return 0
+  fi
+  local up="${t^^}"
+  for cand in "$up" "${up}_IP"; do
+    if [[ -n "${!cand:-}" ]]; then echo "${!cand}"; return 0; fi
+  done
+  echo ""; return 1
+}
+
+TARGET="${1:-}"
+if [[ -n "$TARGET" && ! "$TARGET" =~ ^- ]]; then
+  shift
+  RESOLVED="$(resolve_target "$TARGET" || true)"
+  [ -n "$RESOLVED" ] || { echo "[!] could not resolve target '$TARGET'. Pass an IP or one of: dc01 ms01 ms02 t1 t2 t3 ip1.."; exit 1; }
+  TARGET="$RESOLVED"
+else
+  for v in DC01_IP T1_IP T2_IP T3_IP MS01_IP MS02_IP IP1 IP2 IP3; do
+    if [[ -n "${!v:-}" ]]; then TARGET="${!v}"; echo "[*] no target given - using \$$v = $TARGET"; break; fi
+  done
+  [ -n "$TARGET" ] || { echo "[!] no target and no IP vars set. Run: admap <ip>  (or setup_pentest_env first)"; exit 1; }
+fi
+
+# Resolve the box workspace: -w wins, else current dir if it's a box, else DIR_NAME.
+if [ -z "$WS" ]; then
+  if [ -f "$PWD/notes.md" ] && [ -d "$PWD/scans" ]; then
+    WS="$PWD"
+  elif [ -n "${DIR_NAME:-}" ] && [ -d "$HOME/ACTIVE_PENTEST/$DIR_NAME" ]; then
+    WS="$HOME/ACTIVE_PENTEST/$DIR_NAME"
+  fi
+fi
+
+# Output dir: the box's scans/admap/ if we have a workspace, else cwd.
+if [ -n "$WS" ]; then
+  OUT_DIR="$WS/scans/admap"
+  echo "[*] admap  target=$TARGET  workspace=$WS"
+  echo "[*] output -> $OUT_DIR/   |   playbook -> $OUT_DIR/ad_playbook.md"
+  echo
+  exec python3 "$ADMAP" "$TARGET" -o "$OUT_DIR" "$@"
+else
+  echo "[*] admap  target=$TARGET  (no box workspace found - writing to CWD)"
+  echo
+  exec python3 "$ADMAP" "$TARGET" "$@"
+fi
