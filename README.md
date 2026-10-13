@@ -15,7 +15,7 @@ cd oscp-env && ./install.sh          # add --no-notes to skip the vault clone
 | Path | What it is |
 |------|-----------|
 | `env/` | The environment: `setup_pentest_env` (builds per-box workspaces + IP vars, with the recon hook baked in), `md2pdf_reportgen` (notes → PDF), `toggle-terminal-logging`, the shell settings (`myterm_settings`: aliases + `bloodhound-docker`), Terminator layout, and Obsidian note/report templates. |
-| `reconx/` | **ReconX** — the recon/enum engine. Fast parallel port discovery, targeted per-service enumeration, automated web dir-busting, ranked findings, and `recon` / `recon-exam` launchers that file everything into the box workspace + notes. |
+| `reconx/` | **ReconX** — the recon/enum engine. Fast parallel port discovery, targeted per-service enumeration, automated web dir-busting, ranked findings, and `recon` / `recon-exam` launchers that file everything into the box workspace + notes. Ships **`admap`**, the AD attack-path assistant (Orange Cyberdefense mindmap → ranked, filled-in playbook; see `reconx/ADMAP.md`). |
 | `exam-harness/` | Exam-day helpers: proof/flag tally, report templates, listener/serve/bloodhound scripts, and a servable toolkit (`serve/`). |
 | `install.sh` | One-command setup for a fresh machine. |
 | `docs/` | Field references: command quick-reference, code/exploits, and the exam-day runbook (build as a site with `mkdocs serve`). |
@@ -37,6 +37,10 @@ recon-exam -u alex -p 'Passw0rd!' --staged --parallel 3
 #   =>  ranked findings in each box's notes.md, and a PROGRESS.md triage table
 
 recon <ip>                                        # or drive a single box manually
+
+admap dc01 -d corp.local -u alex -p 'Passw0rd!' --dc-ip <dc-ip> --run
+#   given your current access, print the ranked AD attack-path playbook from the
+#   Orange Cyberdefense mindmap and auto-run the read-only [ENUM] steps
 ```
 
 Every box gets: raw per-service output under `scans/reconx/<ip>/`, findings

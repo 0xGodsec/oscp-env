@@ -366,3 +366,18 @@ reconx only orchestrates standard enumeration tools — no automated *exploitati
 no mass vulnerability scanning. That keeps it on the right side of the OSCP tool
 policy, same category as AutoRecon. Always confirm against the current official
 OSCP Exam Guide before your attempt.
+
+## Next step: `admap` (AD attack paths)
+
+Once ReconX has mapped a box and you know your level of access, **`admap`**
+takes over: it models the [Orange Cyberdefense AD mindmap](https://orange-cyberdefense.github.io/ocd-mindmaps/)
+as a state machine (`no creds → username → creds → local admin → domain
+dominance`) and prints a ranked, already-filled-in playbook. `[ENUM]` steps are
+read-only and can be auto-run with `--run`; `[SPRAY]`/`[MANUAL]` steps are
+printed for you to run by hand.
+
+```bash
+admap dc01 -d corp.local -u alex -p 'Passw0rd!' --dc-ip <dc-ip> --run
+```
+
+See **[ADMAP.md](ADMAP.md)** for the full manual (`python3 admap.py --help`).
