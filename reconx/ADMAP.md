@@ -96,11 +96,13 @@ findings.
   spray `[SPRAY]`, AS-REP roast.
 - **Phase 2 — valid creds:** validate + find where you're admin, BloodHound,
   Kerberoast, AS-REP, share spidering, GPP cpassword, LDAP property mining,
-  Certipy ADCS `find`, delegation enum, MachineAccountQuota read, MSSQL
-  access/priv/link enum; `[MANUAL]` hashcat, ACL-edge abuse, ADCS ESC
-  exploitation, **RBCD** (addcomputer → rbcd → getST → psexec), **noPac**
-  (CVE-2021-42278/42287), **MSSQL → RCE** (xp_cmdshell / EXECUTE AS / linked
-  servers).
+  **LAPS** and **gMSA** password reads, Certipy ADCS `find`, delegation enum,
+  MachineAccountQuota read, MSSQL access/priv/link enum; `[MANUAL]` hashcat,
+  ACL-edge abuse, **Shadow Credentials** (msDS-KeyCredentialLink → PKINIT →
+  UnPAC-the-hash), ADCS ESC exploitation, **RBCD** (addcomputer → rbcd → getST
+  → psexec), **unconstrained** (coerce → capture DC TGT) and **constrained**
+  (S4U getST) delegation abuse, **noPac** (CVE-2021-42278/42287), **MSSQL →
+  RCE** (xp_cmdshell / EXECUTE AS / linked servers).
 - **Phase 3 — local admin:** `[MANUAL]` SAM/LSA + LSASS + DPAPI dump, lateral
   movement (psexec/wmiexec/evil-winrm).
 - **Phase 4 — domain dominance:** `[MANUAL]` DCSync / NTDS, golden ticket.

