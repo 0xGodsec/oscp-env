@@ -139,6 +139,36 @@ Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b
 </pre>
 </div></section>
 
+<section><div class=head><span class=num>4·5</span><h2>PEAS triage — reading the output</h2><span class=tag>no AI needed</span></div>
+<div class=body>
+<p class=note><b>Overwhelmed?</b> Open <code>docs/Triage.html</code> (offline, exam-legal), paste the raw PEAS dump, read the top-ranked findings. It's just a highlighter — allowed.</p>
+<p class=note><b>Read by color, pass one:</b> 🟥 RED+YELLOW highlight = ~95% exploitable → act first. Red alone = worth a look. Green/white = skip until stuck.</p>
+<pre>
+<span class=cmd>./linpeas.sh -e 2>/dev/null | tee lp.txt<span class=c>   # then: less -R lp.txt</span></span>
+<span class=cmd>winPEASx64.exe systeminfo userinfo servicesinfo filesinfo<span class=c>  # scope it, less noise</span></span>
+<span class=cmd>grep -iE 'password|cpassword|secret|PWD' lp.txt</span>
+</pre>
+<p class=note><b>Found nothing? The 3 reflexes:</b></p>
+<ol class=reset>
+<li><b>Re-run PEAS as every new user</b> you become — different user, different findings.</li>
+<li><b>Re-check <code>sudo -l</code> after every credential</b> you discover.</li>
+<li>Work the manual list PEAS under-weights (below) — PEAS is a lead generator, not a solver.</li>
+</ol>
+<pre>
+<span class="cmd nop c"># Linux manual sweep</span>
+<span class=cmd>sudo -l<span class=c>                                 # EVERY entry -> GTFOBins</span></span>
+<span class=cmd>find / -perm -4000 -type f 2>/dev/null<span class=c>  # SUID -> GTFOBins</span></span>
+<span class=cmd>getcap -r / 2>/dev/null<span class=c>                 # cap_setuid=ep = instant root</span></span>
+<span class=cmd>./pspy64<span class=c>                                # WATCH 90s: cron PEAS can't see statically</span></span>
+<span class=cmd>cat /etc/crontab ; ls -la /opt /home/* /var/www<span class=c>  # writable scripts / creds</span></span>
+<span class="cmd nop c"># Windows manual sweep</span>
+<span class=cmd>whoami /priv<span class=c>   # SeImpersonate -> PrintSpoofer / GodPotato</span></span>
+<span class=cmd>reg query HKLM\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallElevated</span>
+<span class=cmd>cmdkey /list ; dir /s *.config *.xml *.kdbx<span class=c>  # stored creds</span></span>
+</pre>
+<p class=note>Password reuse is huge: try every credential for <code>su</code>, SSH, WinRM, and other boxes.</p>
+</div></section>
+
 <section><div class=head><span class=num>5</span><h2>Active Directory</h2><span class=tag>in order</span></div>
 <div class=body>
 <pre>
