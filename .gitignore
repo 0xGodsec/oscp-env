@@ -8,6 +8,14 @@ id_rsa*
 # recon output / loot / runtime
 reconx/reconx-results/
 **/scans/reconx/
+**/scans/admap/
+# admap output when run without -o (writes to CWD, e.g. inside reconx/):
+#   per-technique logs admap_<tid>_<identity>.txt + the per-identity playbook
+admap_*.txt
+ad_playbook.md
+ad_playbook_*.md
+# bloodhound collector output (bloodhound-python / admap bloodhound node)
+*bloodhound.zip
 exam-harness/loot/
 exam-harness/logs/
 exam-harness/targets/*/
@@ -20,6 +28,9 @@ users.csv
 *.uac
 .htaccess
 exam-harness/index.php
+# stray binary staged into serve/ and a saved writeup - not kit source
+exam-harness/serve/admintool.exe
+docs/Climb to SYSTEM.html
 
 # python
 __pycache__/

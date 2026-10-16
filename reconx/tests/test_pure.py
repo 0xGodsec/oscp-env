@@ -220,6 +220,29 @@ class TestScanFindings:
         reconx.scan_findings("nothing interesting on this port", "http", 80, found)
         assert found == []
 
+    def test_lsa_administrator_not_mislabelled_web_path(self):
+        # Regression: an nxc --lsa cached-cred line ("DOMAIN/Administrator:...")
+        # matched the "/admin" web-path token and surfaced as a bogus
+        # "Interesting web path" finding. /admin is now word-anchored, and the
+        # SMB service context gates HTTP rules out entirely.
+        lsa = "SMB 10.0.0.1 445 MS01  OSCP.EXAM/Administrator:$DCC2$10240#Administrator#a3a38"
+        found = []
+        reconx.scan_findings(lsa, "smb", 445, found)
+        assert not any("web path" in f.text.lower() for f in found)
+
+    def test_http_rules_gated_to_web_context(self):
+        # The web-path rule must not fire from a non-web service's output even
+        # when a real "/admin" path appears in it (wrong port/service label).
+        found = []
+        reconx.scan_findings("GET /admin/ HTTP/1.1", "winrm", 5985, found)
+        assert not any(f.service == "http" for f in found)
+
+    def test_real_web_path_still_flagged_on_http(self):
+        # ...but a genuine dir-brute hit on an actual web service still fires.
+        found = []
+        reconx.scan_findings("301 GET http://h/admin/", "http", 80, found)
+        assert any(f.service == "http" and "web path" in f.text.lower() for f in found)
+
 
 # --------------------------------------------------------------------------- #
 # Domain / hosts-line parsing (incl. security regressions)
