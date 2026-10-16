@@ -837,7 +837,7 @@ async def run_enum(tech, st, outdir, timeout):
     info(f"run {C.BOLD}{tech.tid}{C.END}: {C.DIM}{cmd}{C.END}")
     rc, out = await _run(cmd, timeout)
     if outdir:
-        path = os.path.join(outdir, f"admap_{tech.tid}.txt")
+        path = os.path.join(outdir, f"admap_{tech.tid}_{identity_slug(st)}.txt")
         try:
             with open(path, "w") as fh:
                 fh.write(f"$ {cmd}\n\n{out}")
@@ -966,6 +966,23 @@ def default_outdir(st):
     return os.getcwd()
 
 
+def identity_slug(st):
+    """A filesystem-safe tag for the identity this run used, so repeated runs
+    against the same host with different credentials don't clobber each other's
+    output. Keyed on the username (or userlist / anon), with a .local marker so
+    a local account and a domain account of the same name stay distinct."""
+    if st.user:
+        base = st.user
+    elif st.users_file:
+        base = "list-" + os.path.splitext(os.path.basename(st.users_file))[0]
+    else:
+        return "anon"
+    slug = re.sub(r"[^A-Za-z0-9._-]", "_", base).strip("._") or "id"
+    if st.local_auth:
+        slug += ".local"
+    return slug
+
+
 # --------------------------------------------------------------------------- #
 #  CLI
 # --------------------------------------------------------------------------- #
@@ -1031,12 +1048,15 @@ async def amain(argv):
     except OSError:
         outdir = os.getcwd()
 
+    slug = identity_slug(st)
+    md_path = os.path.join(outdir, f"ad_playbook_{slug}.md")
     if not args.no_md:
-        write_markdown(cat, st, os.path.join(outdir, "ad_playbook.md"))
+        write_markdown(cat, st, md_path)
 
     if args.run and not args.dry_run:
         print()
-        info(f"--run: executing [ENUM] steps only, output -> {outdir}")
+        info(f"--run: executing [ENUM] steps only, output -> {outdir} "
+             f"(tagged '{slug}')")
         # Iterate; _learn() may flip state, so recompute applicability each loop.
         ran = set()
         progressed = True
@@ -1055,7 +1075,7 @@ async def amain(argv):
         good("--run complete. Re-rendering with what we learned:\n")
         render(cat, st)
         if not args.no_md:
-            write_markdown(cat, st, os.path.join(outdir, "ad_playbook.md"))
+            write_markdown(cat, st, md_path)
     elif not args.run:
         print(f"\n{C.DIM}Tip: add --run to auto-execute the [ENUM] steps "
               f"(read-only).{C.END}")
