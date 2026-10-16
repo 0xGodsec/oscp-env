@@ -492,7 +492,11 @@ def build_catalog():
            lambda st: st.have_creds,
            lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
            tool=nxc_bin(),
-           success=re.compile(r"AdmPwd|Password|Administrator", re.I)))
+           # Require a recovered value (label + ':'/'=' + a real secret), not the
+           # bare words "Password"/"Administrator" - those appear in nxc's status
+           # lines and benign LDAP fields ("Password Last Set:", a computer owner)
+           # and falsely "confirmed" LAPS with nothing read. Mirrors reconx's rule.
+           success=re.compile(r"(ms-?Mcs-?AdmPwd|LAPS|Password|Administrator)\s*[:=]\s*\S{6,}", re.I)))
 
     A(Tech("gmsa", P_CREDS, "Read gMSA managed passwords", ENUM, 1,
            "Creds > LDAP > msDS-ManagedPassword / gMSA",
