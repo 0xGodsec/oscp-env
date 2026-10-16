@@ -9,8 +9,13 @@ id_rsa*
 reconx/reconx-results/
 **/scans/reconx/
 **/scans/admap/
-# admap playbook when admap.py is run without -o (writes to CWD)
+# admap output when run without -o (writes to CWD, e.g. inside reconx/):
+#   per-technique logs admap_<tid>_<identity>.txt + the per-identity playbook
+admap_*.txt
 ad_playbook.md
+ad_playbook_*.md
+# bloodhound collector output (bloodhound-python / admap bloodhound node)
+*bloodhound.zip
 exam-harness/loot/
 exam-harness/logs/
 exam-harness/targets/*/
