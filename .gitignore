@@ -28,6 +28,9 @@ users.csv
 *.uac
 .htaccess
 exam-harness/index.php
+# stray binary staged into serve/ and a saved writeup - not kit source
+exam-harness/serve/admintool.exe
+docs/Climb to SYSTEM.html
 
 # python
 __pycache__/
