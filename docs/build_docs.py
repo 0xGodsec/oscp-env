@@ -27,6 +27,7 @@ DEFAULT_DOCS = [
     "10_Commands_Quick_Reference.md",
     "11_Code_And_Exploits.md",
     "12_Exam_Day_Runbook.md",
+    "13_Tool_Cheatsheets.md",
 ]
 
 # Palette lifted from the existing Triage.html docs for visual consistency.
