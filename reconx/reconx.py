@@ -1090,7 +1090,11 @@ FINDING_RULES = [
     # (?<!\.) blocks matches touching a dot, so a "firstname.jenkins" or
     # "firstname.gitlab"-style domain username (seen in SMB/LDAP user dumps)
     # doesn't get misread as a Jenkins/GitLab web app or path.
-    ("HIGH",     re.compile(r"(?<!\.)(phpmyadmin|/admin|wp-login|wp-admin|/manager/html|jenkins|gitlab|/api|/backup)", re.I), "http", "Interesting web path discovered"),
+    # /admin\b and /api\b are word-anchored so they match the real paths but NOT
+    # /Administrator - without the \b, an nxc --lsa / --sam dump line like
+    # "DOMAIN/Administrator:$DCC2$..." matched "/admin" and surfaced the box's
+    # most valuable loot as a bogus "web path" on the wrong service/port.
+    ("HIGH",     re.compile(r"(?<!\.)(phpmyadmin|/admin\b|wp-login|wp-admin|/manager/html|jenkins|gitlab|/api\b|/backup)", re.I), "http", "Interesting web path discovered"),
     ("HIGH",     re.compile(r"(?<!\.)(Apache Tomcat|Jenkins|GitLab|WordPress|Drupal|Joomla)[\s/]*([\d.]+)?", re.I), "http", "Notable web application detected"),
     ("MEDIUM",   re.compile(r"Server: .*(IIS|Apache|nginx)[/ ]([\d.]+)", re.I), "http", "Web server banner reveals version"),
     ("MEDIUM",   re.compile(r"(index of /|directory listing)", re.I), "http", "Directory listing enabled"),
@@ -1123,8 +1127,18 @@ FINDING_RULES = [
 ]
 
 
+# Services whose output legitimately carries web content. HTTP-specific rules
+# (web paths, app/server banners) are applied ONLY to these - run against an
+# SMB/WinRM/LDAP/MSSQL dump they mislabel unrelated text as a web finding on the
+# wrong port (defence-in-depth alongside the word-anchored web-path regex).
+_WEB_CONTEXT_SERVICES = {"http", "vuln"}
+
+
 def scan_findings(text, default_service, port, findings):
+    web_ctx = default_service in _WEB_CONTEXT_SERVICES
     for sev, rx, svc_hint, msg in FINDING_RULES:
+        if svc_hint == "http" and not web_ctx:
+            continue
         m = rx.search(text)
         if m:
             findings.append(Finding(sev, svc_hint or default_service, port, msg))
@@ -1568,7 +1582,7 @@ async def enum_ftp(host, port, runner, args, findings):
       - nmap ftp-anon prints "Anonymous FTP login allowed",
       - curl exits 0 (login AND the LIST both succeeded), or
       - netexec prints its "- Anonymous Login!" success line."""
-    tag = f"{host}/ftp"
+    tag = f"{host}/ftp_{port}"
     anon_ok = False
     evidence = None
     if TOOLS.get("nmap"):
@@ -1607,7 +1621,7 @@ async def enum_ftp(host, port, runner, args, findings):
 
 
 async def enum_ssh(host, port, runner, args, findings):
-    tag = f"{host}/ssh"
+    tag = f"{host}/ssh_{port}"
     if TOOLS.get("nmap"):
         await _nmap_nse(host, port, "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey", "ssh", runner, tag, findings)
     # authenticated: validate the credential over SSH via netexec (no brute; single try)
@@ -1680,7 +1694,7 @@ _SMTP_ENUM_MODES = ("VRFY", "EXPN", "RCPT")
 
 
 async def enum_smtp(host, port, runner, args, findings):
-    tag = f"{host}/smtp"
+    tag = f"{host}/smtp_{port}"
     if TOOLS.get("nmap"):
         await _nmap_nse(host, port, "smtp-commands,smtp-enum-users,smtp-open-relay", "smtp", runner, tag, findings)
     if TOOLS.get("smtp-user-enum"):
@@ -1716,7 +1730,7 @@ async def enum_dns(host, port, runner, args, findings):
     guess its zone). A misconfigured NS handing out a full zone on an
     unauthenticated AXFR is a common, high-value miss if left as a manual
     step."""
-    tag = f"{host}/dns"
+    tag = f"{host}/dns_{port}"
     if not TOOLS.get("dig"):
         return
     rc, out = await runner.run(f"dig @{host} -p {port} version.bind chaos txt +short",
@@ -1783,7 +1797,7 @@ async def enum_nfs(host, runner, args, findings):
 
 async def enum_mssql(host, port, runner, args, findings):
     nxc = nxc_bin()
-    tag = f"{host}/mssql"
+    tag = f"{host}/mssql_{port}"
     if nxc and have_creds(args):
         ok = await _nxc_authed_check(nxc, "mssql", host, port, runner, findings, args,
             f"{tag}/auth_nxc.txt", "nxc-mssql-auth", extra="-x whoami",
@@ -1797,21 +1811,22 @@ async def enum_mssql(host, port, runner, args, findings):
                              "--sam", "--lsa"), tag, auth=auth, prefix="auth_nxc")
     elif nxc:
         rc, out = await runner.run(f"{nxc} mssql {host} -u sa -p '' --local-auth",
-                                   f"{host}/mssql/nxc.txt", "nxc-mssql")
+                                   f"{tag}/nxc.txt", "nxc-mssql")
         scan_findings(out, "mssql", port, findings)
     findings.append(Finding("MEDIUM", "mssql", port, "MSSQL exposed - test sa/blank and weak creds (impacket mssqlclient)"))
 
 
 async def enum_redis(host, port, runner, args, findings):
+    tag = f"{host}/redis_{port}"
     if TOOLS.get("redis-cli"):
         rc, out = await runner.run(f"redis-cli -h {host} -p {port} INFO",
-                                   f"{host}/redis/info.txt", "redis-info", timeout=30)
+                                   f"{tag}/info.txt", "redis-info", timeout=30)
         if out and "redis_version" in out:
             findings.append(Finding("HIGH", "redis", port, "Redis reachable without auth - INFO succeeded"))
 
 
 async def enum_postgres(host, port, runner, args, findings):
-    tag = f"{host}/postgres"
+    tag = f"{host}/postgres_{port}"
     nxc = nxc_bin()
     # 1) nmap pgsql-brute: only as a fallback when nxc isn't around to do the
     # same job faster. It brute-forces with nmap's full default word lists,
@@ -1854,7 +1869,7 @@ async def enum_mysql(host, port, runner, args, findings):
     + the mysql/mariadb client: version/info, an empty-password check, and a
     small default-cred probe. Surfaces the common ERROR 1130 host-restriction so
     you know to retry from an allowed host once you have a foothold."""
-    tag = f"{host}/mysql"
+    tag = f"{host}/mysql_{port}"
     result = None   # 'access' (got in) | 'restricted' (1130) | 'up' (reachable)
 
     # 1) nmap NSE: server info + empty-password check.
@@ -1921,7 +1936,7 @@ async def _mail_probe(host, port, tls, runner, tag, label, payload="CAPA\\r\\nQU
 
 
 async def enum_pop3(host, port, runner, args, findings):
-    tag = f"{host}/pop3"
+    tag = f"{host}/pop3_{port}"
     tls = port in (995,)
     if TOOLS.get("nmap"):
         await _nmap_nse(host, port, "pop3-capabilities,pop3-ntlm-info", "pop3", runner, tag, findings)
@@ -1935,7 +1950,7 @@ async def enum_pop3(host, port, runner, args, findings):
 
 
 async def enum_imap(host, port, runner, args, findings):
-    tag = f"{host}/imap"
+    tag = f"{host}/imap_{port}"
     tls = port in (993,)
     if TOOLS.get("nmap"):
         await _nmap_nse(host, port, "imap-capabilities,imap-ntlm-info", "imap", runner, tag, findings)
@@ -1950,12 +1965,13 @@ async def enum_imap(host, port, runner, args, findings):
 
 
 async def enum_winrm(host, port, runner, args, findings):
+    tag = f"{host}/winrm_{port}"
     if have_creds(args):
         nxc = nxc_bin()
         if nxc:
             pw = "-H <hash>" if getattr(args, "hash", None) else "-p <pass>"
             ok = await _nxc_authed_check(nxc, "winrm", host, port, runner, findings, args,
-                f"{host}/winrm/auth_nxc.txt", "nxc-winrm-auth",
+                f"{tag}/auth_nxc.txt", "nxc-winrm-auth",
                 success=Finding("CRITICAL", "winrm", port,
                     f"WinRM login works -> SHELL: evil-winrm -i {host} -u {args.user} {pw}"),
                 on_fail=Finding("INFO", "winrm", port,
@@ -1965,9 +1981,9 @@ async def enum_winrm(host, port, runner, args, findings):
                 auth = nxc_auth(args)
                 await _nxc_enum(nxc, "winrm", host, runner, findings, port,
                                 ("--sam", "--lsa", "--dpapi", "--laps"),
-                                f"{host}/winrm", auth=auth, prefix="auth_nxc")
+                                tag, auth=auth, prefix="auth_nxc")
                 rc, out = await runner.run(f"{nxc} winrm {host} {auth} -x whoami",
-                                           f"{host}/winrm/auth_nxc_exec_whoami.txt",
+                                           f"{tag}/auth_nxc_exec_whoami.txt",
                                            f"{nxc} winrm -x whoami")
                 scan_findings(out, "winrm", port, findings)
         else:
@@ -1979,16 +1995,17 @@ async def enum_winrm(host, port, runner, args, findings):
     nxc = nxc_bin()
     if nxc:
         rc, out = await runner.run(f"{nxc} winrm {host}",
-                                   f"{host}/winrm/nxc.txt", "nxc-winrm")
+                                   f"{tag}/nxc.txt", "nxc-winrm")
         scan_findings(out, "winrm", port, findings)
     findings.append(Finding("MEDIUM", "winrm", port,
                             "WinRM open - if you get creds, use evil-winrm for a shell"))
 
 
 async def enum_rdp(host, port, runner, args, findings):
+    tag = f"{host}/rdp_{port}"
     if TOOLS.get("nmap"):
         out = await _nmap_nse(host, port, "rdp-ntlm-info,rdp-enum-encryption", "rdp",
-                              runner, f"{host}/rdp", findings)
+                              runner, tag, findings)
         m = re.search(r"(DNS_Domain_Name|Target_Name|NetBIOS_Domain_Name):\s*(\S+)", out or "")
         if m:
             findings.append(Finding("MEDIUM", "rdp", port, f"RDP NTLM info leaks: {m.group(2)}"))
@@ -1996,20 +2013,21 @@ async def enum_rdp(host, port, runner, args, findings):
     if have_creds(args):
         if nxc:
             await _nxc_authed_check(nxc, "rdp", host, port, runner, findings, args,
-                f"{host}/rdp/auth_nxc.txt", "nxc-rdp-auth",
+                f"{tag}/auth_nxc.txt", "nxc-rdp-auth",
                 success=Finding("HIGH", "rdp", port,
                     f"RDP login works: xfreerdp /u:{args.user} /p:<pass> /v:{host} /cert:ignore"))
     elif nxc:
         # No creds: unauthenticated nxc banner grab - hostname / domain / OS
         # build and NLA status, complementing the nmap NTLM-info NSE above.
         rc, out = await runner.run(f"{nxc} rdp {host}",
-                                   f"{host}/rdp/nxc.txt", "nxc-rdp")
+                                   f"{tag}/nxc.txt", "nxc-rdp")
         scan_findings(out, "rdp", port, findings)
 
 
 async def enum_vnc(host, port, runner, args, findings):
     """VNC (5900+). netexec detects no-auth VNC and validates a supplied
     password; screenshots are intentionally skipped (display-dependent)."""
+    tag = f"{host}/vnc_{port}"
     nxc = nxc_bin()
     if not nxc:
         findings.append(Finding("MEDIUM", "vnc", port,
@@ -2017,7 +2035,7 @@ async def enum_vnc(host, port, runner, args, findings):
         return
     auth = f"-p {shlex.quote(args.password)}" if getattr(args, "password", None) else ""
     rc, out = await runner.run(f"{nxc} vnc {host} --port {port} {auth}".strip(),
-                               f"{host}/vnc/nxc.txt", f"{nxc} vnc")
+                               f"{tag}/nxc.txt", f"{nxc} vnc")
     scan_findings(out, "vnc", port, findings)
     if _nxc_login_ok(out):
         findings.append(Finding("CRITICAL", "vnc", port,
@@ -2028,9 +2046,20 @@ async def enum_vnc(host, port, runner, args, findings):
     good("vnc enum done")
 
 
+_WMI_DONE = set()
+
+
 async def enum_wmi(host, port, runner, args, findings):
     """WMI / MSRPC (135). With creds, netexec's wmi protocol is an alternate
-    command-execution path when SMB exec (445) is blocked or non-admin."""
+    command-execution path when SMB exec (445) is blocked or non-admin.
+
+    nxc wmi targets the host (via the 135 endpoint mapper), not a port, so this
+    runs once per host - the guard stops a box with several RPC ports open from
+    re-running the identical check. (Cooperative asyncio: the check+add below is
+    race-free with no await between them, matching the _SNMP_DONE guard.)"""
+    if host in _WMI_DONE:
+        return
+    _WMI_DONE.add(host)
     nxc = nxc_bin()
     if not (nxc and have_creds(args)):
         findings.append(Finding("INFO", "wmi", port,
@@ -2501,7 +2530,13 @@ def register_service_jobs(queue, host, services, runner, args, findings, host_pr
         elif port in (5900, 5901, 5902) or "vnc" in name:
             queue.add_job(Job(f"{host}:vnc:{port}", prio("vnc"), background=False,
                 coro_factory=functools.partial(enum_vnc, host, port, runner, args, findings)))
-        elif port == 135 or "msrpc" in name or "epmap" in name:
+        elif port == 135 or (("msrpc" in name or "epmap" in name) and port < 49152):
+            # WMI/MSRPC auth goes through the 135 endpoint mapper and nxc wmi
+            # targets the host, not a port. Windows exposes dozens of dynamic
+            # RPC ports (49152+), all labelled "msrpc" by nmap - dispatching
+            # enum_wmi for each just re-runs the identical check and floods the
+            # output with duplicate (Pwn3d!) lines. Gate to the epmapper / any
+            # static RPC port; _WMI_DONE then makes it one run per host.
             queue.add_job(Job(f"{host}:wmi:{port}", prio("wmi"), background=False,
                 coro_factory=functools.partial(enum_wmi, host, port, runner, args, findings)))
 
