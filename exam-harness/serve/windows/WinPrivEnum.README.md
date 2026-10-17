@@ -94,6 +94,8 @@ Hyper-V Administrators, … — flagged with the escalation path each enables).
   is actually writable by you; otherwise **Medium/Potential**).
 - Weak service **binary** and **directory** permissions.
 - Weak service **registry** permissions (ImagePath tamper).
+- **Modifiable service object DACL** (`sc sdshow` → `SERVICE_CHANGE_CONFIG`/WriteDac/
+  GenericAll granted to your token — the proper PowerUp-style config-tamper check).
 - Inventory of **third-party services running as SYSTEM** (info — the tamper targets).
 - Writable **scheduled-task** binaries/scripts.
 - `AlwaysInstallElevated` (Critical only when **both** hives are set).
@@ -101,13 +103,17 @@ Hyper-V Administrators, … — flagged with the escalation path each enables).
   all-users **Startup** folder.
 - Writable directories on `PATH` (DLL / binary planting leads).
 - UAC configuration (`EnableLUA`, `LocalAccountTokenFilterPolicy`, …).
+- Other security settings: **WDigest `UseLogonCredential`** (cleartext creds in LSASS),
+  **LSA `RunAsPPL`** (LSASS protection status), **Defender status + writable AV
+  exclusions** (payload-drop leads).
 - Kernel / patch **leads** from build + hotfix inventory (explicitly *not* a vuln claim —
   feed to `wesng` / Watson).
 - **Third-party running drivers** (info — candidates for BYOVD / loldrivers.io matching).
 
 **Credential exposure** — PowerShell history, `cmdkey` saved-credential metadata,
-unattend / sysprep files, Winlogon autologon password, **application credential stores in
-the registry** (PuTTY, WinSCP, RealVNC/TightVNC/TigerVNC, SNMP communities, OpenSSH
+unattend / sysprep files, Winlogon autologon password, **readable SAM/SYSTEM/SECURITY
+hive backups** (RegBack/Repair — skips empty 1803+ stubs), **application credential stores
+in the registry** (PuTTY, WinSCP, RealVNC/TightVNC/TigerVNC, SNMP communities, OpenSSH
 agent), and (in `-Full`) a **bounded** search of common config locations for
 credential-looking tokens. It only inspects known config/credential locations and never
 collects unrelated personal data.

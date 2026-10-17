@@ -162,7 +162,28 @@ Get-Content $env:TEMP\wpe-test\*.json -Raw | ConvertFrom-Json   # must parse
 - **Expect:** Info "Third-party services running as SYSTEM (N)" and Info "Non-standard
   running drivers (N)" — leads only, no exploitability claim.
 
-### 4.18 Negative / clean host
+### 4.18 Modifiable service DACL (High/Confirmed)
+- **Pre:** Grant a non-admin `SERVICE_CHANGE_CONFIG` on a service, e.g.
+  `sc sdset wpebin "D:(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BU)(A;;CCLCSWLOCRRC;;;SY)"` (lab only).
+- **Expect:** `High / Confirmed` "Modifiable service configuration: wpebin" naming the
+  granted right (`DC`). An adjacent-token DACL like `SDCC` must **not** false-match.
+
+### 4.19 WDigest cleartext (High/Confirmed)
+- **Pre:** `reg add HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential /t REG_DWORD /d 1`
+- **Expect:** `High / Confirmed` "WDigest cleartext credentials enabled".
+
+### 4.20 LSA RunAsPPL / Defender (Info; writable exclusion = Medium)
+- **Pre:** Any host. For the exclusion case: `Add-MpPreference -ExclusionPath C:\wpe`
+  with `icacls C:\wpe /grant Users:M`.
+- **Expect:** Info "LSA protection RunAsPPL = …" and "Microsoft Defender status";
+  a writable exclusion → `Medium / Confirmed` "Defender path exclusion: C:\wpe".
+
+### 4.21 Readable SAM/SYSTEM hive backup (High/Confirmed)
+- **Pre:** Place non-empty `C:\Windows\Repair\SAM` + `SYSTEM` readable by your user (lab).
+- **Expect:** `High / Confirmed` "Readable registry hive backup: SAM (Repair)". Empty
+  (0-byte) RegBack stubs must be skipped (no finding).
+
+### 4.22 Negative / clean host
 - **Pre:** Fully patched, hardened lab VM with none of the above.
 - **Expect:** Only `Info` findings; summary shows 0 Critical/High; no false `Confirmed`.
 

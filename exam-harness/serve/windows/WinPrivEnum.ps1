@@ -644,6 +644,55 @@ function Invoke-ServiceChecks {
                 -Validation 'Cross-check product versions against known local-privesc CVEs; review each binary/dir ACL.'
         }
     }
+
+    Invoke-Check 'Modifiable service configuration (DACL via sc sdshow)' {
+        # The real "weak service configuration" check: does the current principal hold
+        # SERVICE_CHANGE_CONFIG / WRITE_DAC / WRITE_OWNER / GENERIC_ALL|WRITE on the
+        # service object itself? If so you can repoint its binPath and start it as its
+        # (often SYSTEM) account - independent of registry-key or binary ACLs.
+        if (-not (Test-CommandExists 'sc.exe')) {
+            Write-Log 'sc.exe unavailable; skipping service-DACL check.' 'WARN'
+            return
+        }
+        $dangerRights = @('DC','WD','WO','GA','GW')   # ChangeConfig, WriteDac, WriteOwner, GenericAll, GenericWrite
+        $startRights  = @('RP','WP')                   # Start / Stop (needed to trigger the new binary)
+        # SDDL SID aliases a low-privilege user commonly holds.
+        $aliasSid = @{
+            'WD' = 'S-1-1-0'        # Everyone
+            'AU' = 'S-1-5-11'       # Authenticated Users
+            'BU' = 'S-1-5-32-545'   # BUILTIN\Users
+            'IU' = 'S-1-5-4'        # Interactive
+            'SU' = 'S-1-5-6'        # Service
+            'AN' = 'S-1-5-7'        # Anonymous
+        }
+        $mine = $script:MyTokenSids
+        foreach ($s in $services) {
+            $sddl = ((& sc.exe sdshow $s.Name 2>$null) -join '').Trim()
+            if (-not $sddl -or $sddl -notmatch 'D:') { continue }
+            foreach ($m in [regex]::Matches($sddl, '\(A;[^;]*;([^;]*);[^;]*;[^;]*;([^)]*)\)')) {
+                $rights = $m.Groups[1].Value
+                $sidTok = $m.Groups[2].Value
+                $aceSid = if ($sidTok -like 'S-*') { $sidTok }
+                          elseif ($aliasSid.ContainsKey($sidTok)) { $aliasSid[$sidTok] }
+                          else { $null }
+                if (-not $aceSid -or -not $mine.Contains($aceSid)) { continue }
+                # Split the rights field into its 2-char SDDL tokens (avoids cross-token
+                # substring false positives like "SD"+"CC" matching "DC").
+                $tokens  = [regex]::Matches($rights, '..') | ForEach-Object { $_.Value }
+                $canCfg  = @($tokens | Where-Object { $dangerRights -contains $_ })
+                if ($canCfg.Count -gt 0) {
+                    $canStart = @($tokens | Where-Object { $startRights -contains $_ }).Count -gt 0
+                    New-Finding -Category 'Service' -Title "Modifiable service configuration: $($s.Name)" `
+                        -Severity 'High' -Confidence 'Confirmed' `
+                        -Evidence "Service: $($s.Name)  RunAs: $($s.StartName)`nGrants [$($canCfg -join ',')] to '$sidTok'; start/stop=$canStart`nSDDL: $sddl" `
+                        -Impact 'Repoint the service binary (sc config <svc> binPath=) and (re)start it to run code as the service account (often SYSTEM).' `
+                        -Prerequisite 'Ability to start/restart the service (RP/WP in the same DACL, or a reboot).' `
+                        -Validation 'Confirm with: sc qc <svc> and accesschk.exe -uwcqv <user> <svc>; reconfigure only under authorization.'
+                    break
+                }
+            }
+        }
+    }
 }
 
 function Invoke-ScheduledTaskChecks {
@@ -760,6 +809,57 @@ function Invoke-UacCheck {
                 -Evidence $ev `
                 -Impact 'EnableLUA=0 means no UAC prompts; LocalAccountTokenFilterPolicy=1 eases remote admin logons / pass-the-hash.' `
                 -Validation 'Combine with admin-group membership to judge bypass relevance.'
+        }
+    }
+
+    Invoke-Check 'WDigest cleartext credential caching' {
+        $wd = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest' `
+              -Name UseLogonCredential -ErrorAction SilentlyContinue
+        if ($wd -and $wd.UseLogonCredential -eq 1) {
+            New-Finding -Category 'Credential' -Title 'WDigest cleartext credentials enabled (UseLogonCredential=1)' `
+                -Severity 'High' -Confidence 'Confirmed' `
+                -Evidence 'HKLM\...\SecurityProviders\WDigest\UseLogonCredential = 1' `
+                -Impact 'LSASS caches plaintext passwords; an LSASS dump recovers cleartext credentials of logged-on users.' `
+                -Prerequisite 'Ability to read LSASS (SeDebug/admin) after a user has logged on.' `
+                -Validation 'With SYSTEM/SeDebug: dump LSASS and parse (mimikatz sekurlsa::logonpasswords / pypykatz).'
+        }
+    }
+
+    Invoke-Check 'LSA protection (RunAsPPL)' {
+        $lsa = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -ErrorAction SilentlyContinue
+        $ppl = if ($lsa) { $lsa.RunAsPPL } else { $null }
+        $pplStr = if ([string]::IsNullOrEmpty([string]$ppl)) { 'not set' } else { "$ppl" }
+        New-Finding -Category 'UAC' -Title "LSA protection RunAsPPL = $pplStr" `
+            -Severity 'Info' -Confidence 'Info' `
+            -Evidence "HKLM\SYSTEM\CurrentControlSet\Control\Lsa\RunAsPPL = $pplStr" `
+            -Impact 'RunAsPPL unset/0 means LSASS is not a protected process - standard LSASS dumping works once you have the rights.' `
+            -Validation 'Combine with SeDebug/admin to judge whether an LSASS dump is viable.'
+    }
+
+    Invoke-Check 'Defender status & path exclusions' {
+        if (Test-CommandExists 'Get-MpComputerStatus') {
+            try {
+                $mp = Get-MpComputerStatus -ErrorAction Stop
+                New-Finding -Category 'System' -Title 'Microsoft Defender status' -Severity 'Info' -Confidence 'Info' `
+                    -Evidence "RealTimeProtection=$($mp.RealTimeProtectionEnabled)  AntivirusEnabled=$($mp.AntivirusEnabled)  TamperProtection=$($mp.IsTamperProtected)" `
+                    -Impact 'Informs tooling/payload choice (whether AV evasion is needed).' `
+                    -Validation 'Review exclusions below; confirm behaviour before relying on it.'
+            } catch { }
+        }
+        if (Test-CommandExists 'Get-MpPreference') {
+            $pref = Get-MpPreference -ErrorAction SilentlyContinue
+            foreach ($ex in @($pref.ExclusionPath)) {
+                if ([string]::IsNullOrWhiteSpace($ex)) { continue }
+                $w = Test-PathWritableByMe $ex
+                $sev  = if ($w.Writable) { 'Medium' } else { 'Info' }
+                $conf = if ($w.Writable) { 'Confirmed' } else { 'Info' }
+                $extra = if ($w.Writable) { " (writable by you: $($w.Rights))" } else { '' }
+                New-Finding -Category 'System' -Title "Defender path exclusion: $ex" `
+                    -Severity $sev -Confidence $conf `
+                    -Evidence "Excluded path: $ex$extra" `
+                    -Impact 'Files in an AV-excluded path are not scanned; a writable exclusion is an ideal payload drop location.' `
+                    -Validation 'Stage tooling in a writable exclusion to avoid AV during an authorized test.'
+            }
         }
     }
 }
@@ -899,6 +999,36 @@ function Invoke-CredentialChecks {
                     -Impact 'Stored credentials can be reused non-interactively (e.g. runas /savecred) without knowing the plaintext.' `
                     -Prerequisite 'A stored credential usable by the current user.' `
                     -Validation 'Try runas /savecred /user:<target> against an in-scope action to confirm reuse.'
+            }
+        }
+    }
+
+    Invoke-Check 'Readable SAM / SYSTEM registry hive backups' {
+        # Classic local-hash source: backup copies of the SAM/SYSTEM/SECURITY hives
+        # that a standard user can read. (Since Win10 1803 the RegBack copies are
+        # often zero-byte stubs - those are skipped.)
+        $hives = @(
+            "$env:SystemRoot\System32\config\RegBack\SAM"
+            "$env:SystemRoot\System32\config\RegBack\SYSTEM"
+            "$env:SystemRoot\System32\config\RegBack\SECURITY"
+            "$env:SystemRoot\Repair\SAM"
+            "$env:SystemRoot\Repair\SYSTEM"
+            "$env:SystemRoot\Repair\SECURITY"
+        )
+        foreach ($h in $hives) {
+            if (-not (Test-Path -LiteralPath $h -ErrorAction SilentlyContinue)) { continue }
+            $fi = Get-Item -LiteralPath $h -Force -ErrorAction SilentlyContinue
+            if (-not $fi -or $fi.Length -eq 0) { continue }   # skip empty RegBack stubs
+            $readable = $false
+            try { $fs = [System.IO.File]::OpenRead($h); $fs.Close(); $readable = $true } catch { }
+            if ($readable) {
+                $loc = Split-Path (Split-Path $h -Parent) -Leaf
+                New-Finding -Category 'Credential' -Title "Readable registry hive backup: $(Split-Path $h -Leaf) ($loc)" `
+                    -Severity 'High' -Confidence 'Confirmed' `
+                    -Evidence "File: $h  ($([math]::Round($fi.Length/1KB)) KB, opened for read OK)" `
+                    -Impact 'Copy SAM+SYSTEM (and SECURITY) offline and extract local account hashes.' `
+                    -Prerequisite 'A matching SYSTEM hive is also readable (required to decrypt SAM).' `
+                    -Validation 'Exfil the files and run: impacket-secretsdump -sam SAM -system SYSTEM [-security SECURITY] LOCAL'
             }
         }
     }
