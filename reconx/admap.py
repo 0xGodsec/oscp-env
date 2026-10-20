@@ -188,13 +188,19 @@ class State:
         return " ".join(parts)
 
     def impacket_target(self):
-        """domain/user:pass@host  (or domain/user@host -hashes LM:NT for PtH)."""
+        """domain/user:pass@host  (or domain/user@host -hashes LM:NT for PtH).
+
+        The positional target is a single shell token, so it is shlex.quoted
+        as a whole: a plain target (chars / : . @ - are shell-safe) is left
+        untouched, while a password with spaces or metacharacters is quoted so
+        the printed command and --run stay correct.
+        """
         dom = f"{self.domain}/" if self.domain else ""
         u = self.user or "<user>"
         if self.hash:
-            return f"{dom}{u}@{self.target} -hashes {self.hash}"
+            return f"{shlex.quote(f'{dom}{u}@{self.target}')} -hashes {shlex.quote(self.hash)}"
         pw = self.password if self.password is not None else "<pass>"
-        return f"{dom}{u}:{pw}@{self.target}"
+        return shlex.quote(f"{dom}{u}:{pw}@{self.target}")
 
     def certipy_secret(self):
         """Certipy's credential flag: -p <pass> or -hashes <nt>."""
@@ -513,7 +519,7 @@ def build_catalog():
            "Creds > ADCS > template enumeration",
            "AD CS misconfigs (ESC1/ESC8...) are a reliable domain-takeover path - enumerate first.",
            lambda st: st.have_creds,
-           lambda st: (f"certipy find -u {st.user or '<user>'}@{st.domain or '<domain>'} "
+           lambda st: (f"certipy find -u {shlex.quote((st.user or '<user>') + '@' + (st.domain or '<domain>'))} "
                        f"{st.certipy_secret()} "
                        f"-dc-ip {st.dc_ip} -vulnerable -stdout"),
            tool="certipy",
@@ -565,7 +571,7 @@ def build_catalog():
            "no password reset, and it's quietly reversible.",
            lambda st: st.have_creds,
            lambda st: (
-               f"certipy shadow auto -u {st.user or '<me>'}@{st.domain or '<dom>'} "
+               f"certipy shadow auto -u {shlex.quote((st.user or '<me>') + '@' + (st.domain or '<dom>'))} "
                f"{st.certipy_secret()} -account '<target_user_or_computer$>' -dc-ip {st.dc_ip}\n"
                "# manual chain (pywhisker + PKINITtools):\n"
                "pywhisker.py -d <dom> -u <me> -p <pw> --target '<target>' --action add\n"
@@ -822,19 +828,21 @@ def bloodhound_cmd(st):
     bh = _first("bloodhound-python", "bloodhound-ce-python") or "bloodhound-python"
     secret = f"-p {shlex.quote(st.password)}" if st.password else (
         f"--hashes {shlex.quote(st.hash)}" if st.hash else "-p <pass>")
-    return (f"{bh} -u {st.user or '<user>'} {secret} -d {st.domain or '<domain>'} "
+    return (f"{bh} -u {shlex.quote(st.user or '<user>')} {secret} -d {shlex.quote(st.domain or '<domain>')} "
             f"-ns {st.dc_ip} -c all --zip")
 
 
 # Attach two small helpers to State used by the catalog (impacket cred forms
 # without the trailing @host, for scripts that take -dc-ip instead).
 def _impacket_target_noat(self):
+    # Same token-quoting as impacket_target(); callers that append "@<host>"
+    # concatenate onto a quoted token, which the shell still joins into one word.
     dom = f"{self.domain}/" if self.domain else ""
     u = self.user or "<user>"
     if self.hash:
-        return f"{dom}{u} -hashes {self.hash}"
+        return f"{shlex.quote(f'{dom}{u}')} -hashes {shlex.quote(self.hash)}"
     pw = self.password if self.password is not None else "<pass>"
-    return f"{dom}{u}:{pw}"
+    return shlex.quote(f"{dom}{u}:{pw}")
 
 
 State.impacket_target_noat = _impacket_target_noat
