@@ -57,6 +57,13 @@
 
 .NOTES
     Authorized testing only. Read-only. No exploitation. No configuration changes.
+
+    OSCP exam-safe: this is a read-only enumeration/reporting tool, not an
+    automated-exploitation tool. It only finds and reports vectors and leaves all
+    exploitation to the operator, so it is permitted on every exam target and does
+    not count against the one-Metasploit-box rule. (Operational note: it is an
+    unsigned custom script, so expect to bypass the execution policy and possibly
+    AMSI/Defender to run it.)
 #>
 
 [CmdletBinding(DefaultParameterSetName = 'Run')]
