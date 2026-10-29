@@ -597,16 +597,19 @@ async def discover_ports(host, runner, args):
     one that looks like a genuine finding (confirmed against scanme.nmap.org:
     rustscan variously returned [], [9929,31337], and [31337] across runs while
     22/80/9929/31337 were all open). nmap's adaptive timing + retransmission
-    survive that throttling, so it's the accuracy authority the README promises:
+    survive that throttling, so it's the accuracy authority the README promises,
+    and we ALWAYS run it as a confirmation/union pass when nmap is present:
 
       * bounded scopes (--quick / --top-ports): an nmap confirmation pass costs
         only seconds, so always run it and UNION in whatever the fast sweep
         missed. This closes both the empty and the partial-result holes.
-      * full range (-p-): nmap -p- is minutes, not seconds, so keep the fast
-        sweep as the result and only fall back to nmap when it found NOTHING
-        (the unambiguous throttled/host-down case). A throttled full-range scan
-        can still under-report; re-run with --top-ports/--quick, or the -p-
-        result feeds nmap -sCV confirmation downstream anyway.
+      * full range (-p-): nmap -p- costs a couple of minutes on a live host, but
+        a silently under-reported port list costs hours of a stuck engagement
+        (an AD host throttling the fast sweep down to 3 of its dozen-plus open
+        ports is the exact failure this guards against). So we run nmap -p- here
+        too and UNION its results in - accuracy wins over the saved minutes. On a
+        genuinely-down host the fast sweep finds nothing and nmap -p- -Pn is the
+        same last-resort pass it always was.
     """
     # Full range unless --quick/--top-ports narrows it.
     if args.quick:
@@ -624,7 +627,13 @@ async def discover_ports(host, runner, args):
     if TOOLS.get("rustscan") and not args.no_rustscan:
         info(f"port discovery via rustscan ({'top 1000' if args.quick else 'full range'})")
         rng = "--top" if args.quick else "-r 1-65535"
-        cmd = (f"rustscan -a {host} {rng} --ulimit 5000 -b 1500 "
+        # Gentler batch/ulimit than rustscan's defaults: a 1500-connection burst
+        # readily trips rate-limiting on hardened hosts (notably AD servers),
+        # making rustscan silently under-report. -b 500 keeps far fewer sockets
+        # in flight at once, so the sweep is less likely to be throttled into a
+        # partial result in the first place; the nmap confirmation pass in
+        # discover_ports() remains the accuracy backstop either way.
+        cmd = (f"rustscan -a {host} {rng} --ulimit 5000 -b 500 "
                f"-t {int(args.host_timeout*1000)} -g")
         rc, out = await runner.run(cmd, outfile=f"{host}/scans/rustscan.txt",
                                    label="rustscan", timeout=args.scan_timeout)
@@ -673,10 +682,14 @@ async def discover_ports(host, runner, args):
                                               timeout=args.host_timeout)
         ports.update(found)
 
-    # nmap: confirm the fast result on bounded scopes (cheap, catches throttled
-    # partial results), or act as the last-resort discovery when the fast sweep
-    # found nothing at all. See the docstring for why full -p- skips the confirm.
-    if TOOLS.get("nmap") and (bounded or not ports):
+    # nmap: ALWAYS confirm the fast result (bounded or full -p-) when nmap is
+    # available, and UNION in anything it found. The fast sweep fires large
+    # connection bursts that a rate-limiting host/firewall silently drops,
+    # yielding a PARTIAL result that looks genuine - e.g. an AD host reporting
+    # only 3 of its dozen-plus open ports. nmap's retransmission survives that
+    # throttling, so skipping it on full-range scans was under-reporting ports.
+    # See the docstring for the accuracy-over-minutes trade-off.
+    if TOOLS.get("nmap"):
         before = set(ports)
         ports.update(await nmap_discover(host, runner, args, confirm=bool(before)))
         gained = ports - before
